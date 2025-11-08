@@ -55,6 +55,21 @@ A rotina `convergence` fixa um Browniano de referencia com a malha mais fina, ag
 
 Todos os arquivos ficam em `figures/`, enquanto tabelas (`bond_price_*.csv`, `term_structure_*.csv`, `convergence_*.csv`) sao armazenadas em `data/`.
 
+## Streamlit app
+
+Há um painel interativo em `streamlit_app/app.py` que reutiliza os módulos `cir`. Ele oferece:
+
+- Sidebar com seleção de preset/esquema, ajustes de malha (`T`, passos/ano, nº de caminhos, seed);
+- Aba **Trajetórias** (gráfico + métricas), **Distribuição terminal** (histograma), **B(0,T)/yield** (tabela + curva zero);
+- Aba **Convergência** com RMSE log–log e exportação do CSV quando habilitada;
+- Switch opcional para recalcular a term-structure direto no navegador.
+
+Para executar localmente após instalar os requisitos:
+
+```bash
+streamlit run streamlit_app/app.py
+```
+
 ## Scripts uteis
 
 Os scripts em `scripts/` encadeiam os comandos principais:
