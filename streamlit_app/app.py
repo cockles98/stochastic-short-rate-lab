@@ -11,10 +11,16 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from cir.analytics import mean_short_rate, variance_short_rate, zero_coupon_price
 from cir.bonds import bond_price_mc
 from cir.convergence import strong_order_convergence
 from cir.params import get_params_preset
 from cir.simulate import simulate_paths
+from cir.validation import (
+    compare_moments,
+    compare_zero_coupon_prices,
+    zero_coupon_error_by_steps,
+)
 
 st.set_page_config(page_title="CIR Dashboard", layout="wide")
 st.title("CIR Dashboard - Layout base")
@@ -33,6 +39,7 @@ with sidebar:
     st.subheader("Opcoes adicionais")
     show_term_structure = st.checkbox("Calcular term structure", value=False)
     show_convergence = st.checkbox("Calcular convergencia forte (EM)", value=False)
+    show_validation = st.checkbox("Comparar com formulas analiticas", value=False)
     term_paths = None
     if show_term_structure:
         term_paths = st.slider("Caminhos para term structure", min_value=500, max_value=5000, value=2000, step=500)
@@ -44,10 +51,26 @@ with sidebar:
             options=[52, 104, 208, 416, 832],
             default=[52, 104, 208, 416, 832],
         )
+    if show_validation:
+        val_maturities = st.multiselect(
+            "Maturidades para comparar (analitico vs MC)",
+            options=[0.25, 0.5, 1.0, 2.0, 5.0],
+            default=[0.5, 1.0, 2.0],
+        )
+        val_paths = st.number_input(
+            "Caminhos para validacao", value=5000, min_value=1000, max_value=200000, step=1000
+        )
+        val_steps = st.slider(
+            "Steps/ano para validacao", min_value=52, max_value=365, value=126, step=26
+        )
     else:
         conv_paths, conv_steps = None, None
+        val_maturities, val_paths, val_steps = None, None, None
 
-st.caption("Controles basicos conectados aos modulos do pacote. As proximas etapas adicionarao graficos especificos e downloads.")
+st.caption(
+    "Controles basicos conectados aos modulos do pacote. As abas abaixo exibem simulacoes, "
+    "termostructure, convergencia e validacao analitica (quando habilitado)."
+)
 
 params = get_params_preset(preset)
 n_steps = int(T * steps_per_year)
@@ -66,12 +89,11 @@ except Exception as exc:
     st.error(f"Erro ao simular caminhos: {exc}")
 
 if paths is not None:
-    tab_paths, tab_hist, tab_term, tab_conv = main.tabs([
-        "Trajetorias",
-        "Distribuicao terminal",
-        "B(0,T) e yield",
-        "Convergencia",
-    ])
+    tabs = ["Trajetorias", "Distribuicao terminal", "B(0,T) e yield", "Convergencia"]
+    if show_validation:
+        tabs.append("Validacao analitica")
+    tab_paths, tab_hist, tab_term, tab_conv, *rest = main.tabs(tabs)
+    tab_val = rest[0] if rest else None
 
     with tab_paths:
         df_paths = pd.DataFrame(
@@ -173,5 +195,51 @@ if paths is not None:
                 st.error(f"Erro ao calcular convergencia: {exc}")
         else:
             st.info("Ative a opcao 'Calcular convergencia forte (EM)' e selecione steps validos para ver esta secao.")
+    if show_validation and tab_val is not None and val_maturities:
+        with tab_val:
+            st.subheader("Comparacao zero-coupon (MC vs analitico)")
+            price_df = compare_zero_coupon_prices(
+                params=params,
+                maturities=val_maturities,
+                n_paths=int(val_paths),
+                steps_per_year=int(val_steps),
+                seed=int(seed) * 3,
+            )
+            st.dataframe(price_df, use_container_width=True)
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(price_df["T"], price_df["abs_error"], "o-", label="|Erro|")
+            ax.set(xlabel="Maturidade", ylabel="Erro absoluto", title="Erro de preco vs maturidade")
+            ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
+            st.pyplot(fig)
+
+            st.subheader("Erro vs passos (fixando maturidade)")
+            err_df = zero_coupon_error_by_steps(
+                params=params,
+                maturity=1.0,
+                n_paths=int(val_paths),
+                steps_list=[32, 64, 128, 256],
+                seed=int(seed) * 5,
+                scheme=scheme,
+            )
+            st.dataframe(err_df, use_container_width=True)
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            ax2.loglog(err_df["dt"], err_df["abs_error"], "s-", label="|Erro|")
+            ax2.set(xlabel="dt", ylabel="Erro absoluto", title="Erro vs passo (log-log)")
+            ax2.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.3)
+            st.pyplot(fig2)
+
+            st.subheader("Momentos vs analitico")
+            moment_result = compare_moments(
+                params=params,
+                T=1.0,
+                n_paths=int(val_paths),
+                n_steps=int(val_steps),
+                seed=int(seed) * 7,
+                scheme=scheme,
+            )
+            col_m = st.columns(2)
+            col_m[0].metric("Media (MC vs analitico)", f"{moment_result['mean_mc']:.4f}", f"ref {moment_result['mean_analytic']:.4f}")
+            col_m[1].metric("Var (MC vs analitico)", f"{moment_result['var_mc']:.4f}", f"ref {moment_result['var_analytic']:.4f}")
+
 else:
     main.warning("Aguardando configuracao valida para simular trajetorias.")

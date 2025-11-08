@@ -55,20 +55,34 @@ A rotina `convergence` fixa um Browniano de referencia com a malha mais fina, ag
 
 Todos os arquivos ficam em `figures/`, enquanto tabelas (`bond_price_*.csv`, `term_structure_*.csv`, `convergence_*.csv`) sao armazenadas em `data/`.
 
-## Streamlit app
+## Streamlit app + validação analítica
 
-Há um painel interativo em `streamlit_app/app.py` que reutiliza os módulos `cir`. Ele oferece:
+`streamlit_app/app.py` usa os mesmos módulos `cir` e agora inclui:
 
-- Sidebar com seleção de preset/esquema, ajustes de malha (`T`, passos/ano, nº de caminhos, seed);
-- Aba **Trajetórias** (gráfico + métricas), **Distribuição terminal** (histograma), **B(0,T)/yield** (tabela + curva zero);
-- Aba **Convergência** com RMSE log–log e exportação do CSV quando habilitada;
-- Switch opcional para recalcular a term-structure direto no navegador.
+- Sidebar com seleção de preset/esquema, controle de malha e toggles para term-structure e convergência forte;
+- Abas **Trajetórias**, **Distribuição terminal**, **B(0,T)/yield** e **Convergência** (log–log + download de CSV);
+- Aba **Validação analítica** (quando ativada) que compara Monte Carlo com as fórmulas fechadas do CIR via `cir.analytics` e `cir.validation`, exibindo:
+  * tabela `MC vs analítico` para zero-coupons e gráfico de erro × maturidade;
+  * gráfico log–log do erro vs passo (`zero_coupon_error_by_steps`);
+  * métricas de momentos (`E[r_T]`, `Var[r_T]`) calculadas tanto por simulação quanto pela solução analítica.
 
-Para executar localmente após instalar os requisitos:
+Execute com:
 
 ```bash
 streamlit run streamlit_app/app.py
 ```
+
+### Validação analítica e relatórios
+
+Além do dashboard, o pacote possui utilitários de comparação:
+
+- `cir/analytics.py`: preço fechado do zero-coupon, média e variância de `r_T`;
+- `cir/validation.py`: funções para gerar DataFrames com erros absolutos/relativos e curvas erro × passo;
+- Testes (`tests/test_analytics.py`, `tests/test_validation.py`) asseguram consistência;
+- O notebook `notebooks/projeto1_autonomo.ipynb` explica o pipeline inteiro e demonstra as comparações;
+- `report/relatorio_base.md` resume metodologia, convergência e estrutura a termo.
+
+Essas peças podem alimentar relatórios técnicos ou slides de portfólio usando os CSVs/figuras já gerados (`data/`, `figures/`).
 
 ## Scripts uteis
 
