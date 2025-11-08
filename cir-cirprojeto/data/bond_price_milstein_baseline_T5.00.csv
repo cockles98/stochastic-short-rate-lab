@@ -1,0 +1,2 @@
+scheme,preset,T,price,stderr,n_paths,n_steps
+milstein,baseline,5.0,0.7923042317031195,0.0007419116155442857,5000,1260
