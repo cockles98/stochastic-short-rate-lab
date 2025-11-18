@@ -36,6 +36,7 @@ Execute os comandos a partir da raiz `cir-cirprojeto/` usando `python -m cir.cli
 | `terminal-hist` | Simula muitas trajetorias e plota o histograma terminal. | `python -m cir.cli terminal-hist --scheme milstein --preset fast-revert --T 5 --paths 50000 --steps-per-year 252 --seed 99` |
 | `bond-price` | Monte Carlo para `B(0,T)` com erro padrao, grava CSV. | `python -m cir.cli bond-price --scheme em --preset slow-revert --T 5 --paths 5000 --steps-per-year 252 --seed 7` |
 | `term-structure` | Varre maturidades, salva tabela + figura da curva. | `python -m cir.cli term-structure --scheme milstein --preset baseline --Tmax 10 --grid 40 --paths 5000 --steps-per-year 252 --seed 777` |
+| `calibrate-market` | Ajusta `(kappa, theta, sigma, r0)` a uma curva DI simples usando `data/raw_di_curve*.csv`. | `python -m cir.cli calibrate-market --data data/raw_di_curve.csv --maturities "0.25,0.5,1,2,5"` |
 
 Execute `python -m cir.cli --help` ou `<comando> --help` para mais opcoes.
 
@@ -84,6 +85,25 @@ Além do dashboard, o pacote possui utilitários de comparação:
 
 Essas peças podem alimentar relatórios técnicos ou slides de portfólio usando os CSVs/figuras já gerados (`data/`, `figures/`).
 
+## Calibração e dados de mercado
+
+- `scripts/fetch_di_curve.py`: baixa a série DI (Bacen/SGS 4390), normaliza datas e taxas e salva como CSV/Parquet (`data/raw_di_curve.*`).
+- `scripts/fetch_di_curve.sh`: alternativa em shell usando `curl`.
+- CLI `python -m cir.cli calibrate-market ...` calibra `(kappa, theta, sigma, r0)` a partir dessa curva e salva comparativos/JSON.
+- Notebook `notebooks/projeto1_calibration.ipynb` replica a calibração com gráficos e discute próximos passos (bootstrapping/MLE).
+
+Fluxo sugerido:
+
+1. Baixe a curva:
+   ```bash
+   python scripts/fetch_di_curve.py --start 01/01/2020 --out data/raw_di_curve.csv
+   ```
+2. Rode a calibração básica:
+   ```bash
+   python -m cir.cli calibrate-market --data data/raw_di_curve.csv --maturities "0.25,0.5,1,2,5"
+   ```
+3. Abra o notebook `notebooks/projeto1_calibration.ipynb` para inspeções detalhadas (tabelas, gráficos, recomendações).
+
 ## Scripts uteis
 
 Os scripts em `scripts/` encadeiam os comandos principais:
@@ -103,6 +123,12 @@ Cada script gera trajetorias (3 presets), histograma terminal, estudo de converg
 ## Testes e notebooks
 
 Rode `pytest` para validar o pacote. O notebook `notebooks/projeto1_demo.ipynb` demonstra trajetorias, convergencia e precificacao usando os modulos `cir`.
+
+```bash
+pytest
+```
+
+A suíte cobre parâmetros, SDEs, bonds, validação analítica, calibração e comparações com fórmulas fechadas.
 
 ## Creditos
 

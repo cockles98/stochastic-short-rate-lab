@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Iterable, List, Literal
@@ -11,6 +12,7 @@ import pandas as pd
 import typer
 
 from .bonds import bond_price_mc, term_structure as compute_term_structure
+from .calibration import calibrate_zero_coupon_curve, price_curve
 from .convergence import run_convergence_report
 from .params import CIRParams, get_params_preset
 from .plots import plot_paths
@@ -45,6 +47,16 @@ def _parse_steps_list(base_steps: str) -> List[int]:
     if not steps:
         raise typer.BadParameter("Provide at least one integer for base-steps.")
     return steps
+
+
+def _parse_float_list(value: str) -> List[float]:
+    try:
+        floats = [float(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as exc:
+        raise typer.BadParameter("Provide a comma-separated list of numbers.") from exc
+    if not floats:
+        raise typer.BadParameter("Provide at least one numeric value.")
+    return floats
 
 
 @app.command("simulate-paths")
@@ -208,6 +220,80 @@ def term_structure(
     )
     typer.echo(f"Saved term-structure data to {csv_path}")
     typer.echo(f"Saved figure to {fig_path}")
+
+
+@app.command("calibrate-market")
+def calibrate_market(
+    data_path: Path = typer.Option(
+        Path("data/raw_di_curve.csv"), "--data", help="Arquivo CSV com colunas 'date' e 'rate'."
+    ),
+    maturities: str = typer.Option(
+        "0.25,0.5,1.0,2.0,3.0,5.0", "--maturities", help="Lista de maturidades alvo em anos."
+    ),
+    initial_preset: PresetLiteral = typer.Option(
+        "baseline", "--initial-preset", help="Preset usado como chute inicial."
+    ),
+    curve_out: Path = typer.Option(
+        Path("data/calibration_curve.csv"), "--curve-out", help="CSV com preços mercado vs ajustado."
+    ),
+    params_out: Path = typer.Option(
+        Path("data/calibration_params.json"), "--params-out", help="JSON com parâmetros calibrados."
+    ),
+    last_n: int = typer.Option(
+        1, "--last-n", min=1, help="Usar média das últimas N observações do arquivo."
+    ),
+    penalty: float = typer.Option(1e4, "--penalty", help="Penalidade para violação da Feller."),
+) -> None:
+    """Calibrate CIR parameters to a simple DI market curve."""
+
+    if not data_path.exists():
+        raise typer.BadParameter(f"Arquivo {data_path} não encontrado.")
+    df = pd.read_csv(data_path)
+    if "rate" not in df.columns:
+        raise typer.BadParameter("CSV deve conter a coluna 'rate'.")
+    if last_n > len(df):
+        raise typer.BadParameter("last-n excede o tamanho do arquivo.")
+
+    rate = float(df["rate"].tail(last_n).astype(float).mean())
+    mats = _parse_float_list(maturities)
+    market_prices = np.exp(-rate * np.asarray(mats))
+
+    initial = get_params_preset(initial_preset)
+    result = calibrate_zero_coupon_curve(
+        maturities=mats,
+        market_prices=market_prices,
+        initial=initial,
+        penalty=penalty,
+    )
+
+    fitted_prices = price_curve(result.params, mats)
+    compare_df = pd.DataFrame(
+        {
+            "T": mats,
+            "market_price": market_prices,
+            "fitted_price": fitted_prices,
+            "abs_error": np.abs(fitted_prices - market_prices),
+        }
+    )
+
+    curve_out.parent.mkdir(parents=True, exist_ok=True)
+    compare_df.to_csv(curve_out, index=False)
+
+    params_out.parent.mkdir(parents=True, exist_ok=True)
+    params_data = {
+        "kappa": result.params.kappa,
+        "theta": result.params.theta,
+        "sigma": result.params.sigma,
+        "r0": result.params.r0,
+        "success": result.success,
+        "message": result.message,
+        "loss": result.fun,
+    }
+    params_out.write_text(json.dumps(params_data, indent=2))
+
+    typer.echo(f"Param calib: {result.params}")
+    typer.echo(f"Saved comparison curve to {curve_out}")
+    typer.echo(f"Saved calibrated params to {params_out}")
 
 
 def app_main() -> None:
