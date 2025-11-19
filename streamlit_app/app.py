@@ -1,4 +1,5 @@
-﻿import math
+﻿import json
+import math
 import sys
 from pathlib import Path
 
@@ -39,6 +40,93 @@ from cir.validation import (
     compare_moments,
     compare_zero_coupon_prices,
     zero_coupon_error_by_steps,
+)
+from examples.utils.scenario_builders import DEFAULT_SCENARIOS
+from examples.utils.swap_helpers import SwapSchedule, swaption_payoff
+
+
+def _integrated_discount(path: np.ndarray, t: np.ndarray, T: float) -> float:
+    mask = t <= T
+    if not np.any(mask):
+        return 1.0
+    integral = np.trapz(path[mask], t[mask])
+    return float(math.exp(-integral))
+
+
+def price_swaption_for_model(
+    model_name: str,
+    model_cfg: dict,
+    params,
+    schedule: SwapSchedule,
+    strike: float,
+    kind: str,
+    n_paths: int,
+    steps_per_year: int,
+    exercise: float,
+    seed: int,
+    preferred_scheme: str,
+) -> tuple[float, float]:
+    total_T = float(schedule.payment_times[-1])
+    n_steps = max(1, int(total_T * steps_per_year))
+    scheme = preferred_scheme if preferred_scheme in model_cfg["schemes"] else model_cfg["schemes"][model_cfg["default_scheme_index"]]
+    t, paths = model_cfg["simulate"](
+        scheme=scheme,
+        params=params,
+        T=total_T,
+        n_steps=n_steps,
+        n_paths=n_paths,
+        seed=seed,
+    )
+    payoffs = []
+    for path in paths:
+        discounts = np.array([_integrated_discount(path, t, float(Ti)) for Ti in schedule.payment_times])
+        payoff = swaption_payoff(discounts, schedule, strike, kind)
+        disc_ex = _integrated_discount(path, t, exercise)
+        payoffs.append(payoff * disc_ex)
+    payoffs = np.asarray(payoffs)
+    price = float(payoffs.mean())
+    stderr = float(payoffs.std(ddof=1) / math.sqrt(len(payoffs))) if len(payoffs) > 1 else 0.0
+    return price, stderr
+
+
+def _build_cashflow_df(data: list[dict], label: str) -> pd.DataFrame:
+    df = pd.DataFrame(data)
+    if df.empty or not {"time", "amount"} <= set(df.columns):
+        raise ValueError(f"{label} precisa conter 'time' e 'amount'.")
+    df = df.astype({"time": float, "amount": float}).sort_values("time")
+    return df
+
+
+def _pv_cashflows(df: pd.DataFrame, times: np.ndarray, rates: np.ndarray) -> float:
+    interp_rates = np.interp(df["time"].to_numpy(), times, rates, left=rates[0], right=rates[-1])
+    discounts = np.exp(-interp_rates * df["time"].to_numpy())
+    return float(np.sum(df["amount"].to_numpy() * discounts))
+
+
+def _duration(df: pd.DataFrame, times: np.ndarray, rates: np.ndarray) -> float:
+    interp_rates = np.interp(df["time"].to_numpy(), times, rates, left=rates[0], right=rates[-1])
+    discounts = np.exp(-interp_rates * df["time"].to_numpy())
+    pv = np.sum(df["amount"].to_numpy() * discounts)
+    if pv == 0:
+        return 0.0
+    weighted = np.sum(df["time"].to_numpy() * df["amount"].to_numpy() * discounts)
+    return float(weighted / pv)
+
+
+SAMPLE_CASHFLOWS_JSON = json.dumps(
+    {
+        "assets": [
+            {"time": 1.0, "amount": 1_000_000},
+            {"time": 3.0, "amount": 1_200_000},
+            {"time": 5.0, "amount": 1_500_000},
+        ],
+        "passives": [
+            {"time": 0.5, "amount": 800_000},
+            {"time": 2.0, "amount": 1_000_000},
+            {"time": 4.0, "amount": 1_400_000},
+        ],
+    },
+    indent=2,
 )
 
 MODEL_REGISTRY = {
@@ -197,6 +285,43 @@ with sidebar:
     else:
         show_calibration = False
         st.caption("Calibração automática ainda não disponível para este modelo.")
+    st.markdown("---")
+    st.subheader("Casos de uso")
+    show_swaption_demo = st.checkbox("Simular swaption (MC)", value=False)
+    swaption_settings = None
+    if show_swaption_demo:
+        swaption_kind = st.selectbox("Tipo de swaption", ["payer", "receiver"])
+        swaption_exercise = st.number_input("Exercício (anos)", value=2.0, min_value=0.5, max_value=10.0, step=0.5)
+        swaption_tenor = st.number_input("Tenor do swap (anos)", value=3.0, min_value=0.5, max_value=10.0, step=0.5)
+        swaption_freq = st.selectbox("Frequência dos cupons (por ano)", [1, 2, 4], index=1)
+        swaption_strike = st.number_input("Strike (taxa fixa)", value=0.04, format="%.3f")
+        swaption_paths = st.slider("Caminhos para swaption", min_value=500, max_value=5000, value=2000, step=500)
+        swaption_steps = st.slider("Passos/ano (swaption)", min_value=52, max_value=365, value=126, step=26)
+        swaption_settings = {
+            "kind": swaption_kind,
+            "exercise": float(swaption_exercise),
+            "tenor": float(swaption_tenor),
+            "freq": int(swaption_freq),
+            "strike": float(swaption_strike),
+            "paths": int(swaption_paths),
+            "steps_per_year": int(swaption_steps),
+        }
+    show_alm_demo = st.checkbox("Simular cenários ALM", value=False)
+    alm_settings = None
+    if show_alm_demo:
+        alm_text = st.text_area("Fluxos (JSON)", value=SAMPLE_CASHFLOWS_JSON, height=200)
+        alm_paths = st.slider("Caminhos para curva média", min_value=200, max_value=5000, value=1000, step=200)
+        alm_steps = st.slider("Passos/ano (ALM)", min_value=52, max_value=365, value=126, step=26)
+        alm_seed = st.number_input("Seed (ALM)", value=99, step=1)
+        alm_settings = {
+            "json": alm_text,
+            "paths": int(alm_paths),
+            "steps_per_year": int(alm_steps),
+            "seed": int(alm_seed),
+        }
+    else:
+        show_calibration = False
+        st.caption("Calibração automática ainda não disponível para este modelo.")
     term_paths = None
     if show_term_structure:
         term_paths = st.slider(
@@ -319,18 +444,25 @@ if paths is not None:
     tabs = ["Trajetorias", "Distribuicao terminal", "B(0,T) e yield", "Convergencia"]
     if has_comparison:
         tabs.append("Comparativo modelos")
+    if swaption_settings:
+        tabs.append("Swaption MC")
+    if alm_settings:
+        tabs.append("Cenarios ALM")
     if show_validation:
         tabs.append("Validacao analitica")
     if show_calibration:
         tabs.append("Calibracao mercado")
-    created_tabs = iter(main.tabs(tabs))
-    tab_paths = next(created_tabs)
-    tab_hist = next(created_tabs)
-    tab_term = next(created_tabs)
-    tab_conv = next(created_tabs)
-    tab_compare = next(created_tabs) if has_comparison else None
-    tab_val = next(created_tabs) if show_validation else None
-    tab_calib = next(created_tabs) if show_calibration else None
+    tab_objects = main.tabs(tabs)
+    tab_lookup = dict(zip(tabs, tab_objects))
+    tab_paths = tab_lookup["Trajetorias"]
+    tab_hist = tab_lookup["Distribuicao terminal"]
+    tab_term = tab_lookup["B(0,T) e yield"]
+    tab_conv = tab_lookup["Convergencia"]
+    tab_compare = tab_lookup.get("Comparativo modelos")
+    tab_swaption = tab_lookup.get("Swaption MC")
+    tab_alm = tab_lookup.get("Cenarios ALM")
+    tab_val = tab_lookup.get("Validacao analitica")
+    tab_calib = tab_lookup.get("Calibracao mercado")
 
     with tab_paths:
         st.markdown("### Trajetórias simuladas")
@@ -499,6 +631,122 @@ if paths is not None:
             ax_curve.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
             ax_curve.legend()
             st.pyplot(fig_curve)
+    if swaption_settings and tab_swaption is not None:
+        with tab_swaption:
+            st.markdown("### Precificação de swaption via Monte Carlo")
+            st.caption("Os resultados utilizam os mesmos presets escolhidos no menu lateral. Para reduzir o tempo, mantenha o número de caminhos moderado.")
+            schedule = SwapSchedule.from_tenor(
+                exercise=swaption_settings["exercise"],
+                tenor=swaption_settings["tenor"],
+                freq=swaption_settings["freq"],
+            )
+            rows = []
+            for idx, name in enumerate(compare_models_ordered):
+                cfg = MODEL_REGISTRY[name]
+                try:
+                    params_cmp = cfg["get_params"](preset)
+                    price_mc, stderr_mc = price_swaption_for_model(
+                        model_name=name,
+                        model_cfg=cfg,
+                        params=params_cmp,
+                        schedule=schedule,
+                        strike=swaption_settings["strike"],
+                        kind=swaption_settings["kind"],
+                        n_paths=swaption_settings["paths"],
+                        steps_per_year=swaption_settings["steps_per_year"],
+                        exercise=swaption_settings["exercise"],
+                        seed=int(seed) + idx * 17,
+                        preferred_scheme=scheme,
+                    )
+                    rows.append(
+                        {
+                            "Modelo": name,
+                            "Preco": price_mc,
+                            "Erro padrão": stderr_mc,
+                        }
+                    )
+                except Exception as exc:
+                    st.error(f"Falha ao precificar {name}: {exc}")
+            if rows:
+                df_swap = pd.DataFrame(rows).set_index("Modelo")
+                st.dataframe(df_swap.style.format({"Preco": "{:.4f}", "Erro padrão": "{:.4f}"}))
+                st.caption("Visualização do preço estimado por modelo.")
+                st.bar_chart(df_swap["Preco"])
+                st.write(
+                    f"Swaption {swaption_settings['kind']} | Exercício {swaption_settings['exercise']} | "
+                    f"Tenor {swaption_settings['tenor']} | Strike {swaption_settings['strike']:.3%}"
+                )
+            else:
+                st.info("Ative ao menos um modelo válido para visualizar o preço da swaption.")
+    if alm_settings and tab_alm is not None:
+        with tab_alm:
+            st.markdown("### Cenários ALM")
+            st.write("Aplica choques determinísticos (parallel, steepener, flattener, ramp) sobre uma curva média simulada.")
+            try:
+                data_json = json.loads(alm_settings["json"])
+                assets_df = _build_cashflow_df(data_json.get("assets", []), "assets")
+                passives_df = _build_cashflow_df(data_json.get("passives", []), "passives")
+                max_time = float(max(assets_df["time"].max(), passives_df["time"].max()))
+                horizon = max(1.0, max_time + 0.5)
+                alm_steps = alm_settings["steps_per_year"]
+                n_steps = int(horizon * alm_steps)
+                cfg = MODEL_REGISTRY[model_name]
+                params_alm = cfg["get_params"](preset)
+                scheme_alm = scheme if scheme in cfg["schemes"] else cfg["schemes"][cfg["default_scheme_index"]]
+                t_curve, paths_curve = cfg["simulate"](
+                    scheme=scheme_alm,
+                    params=params_alm,
+                    T=horizon,
+                    n_steps=n_steps,
+                    n_paths=alm_settings["paths"],
+                    seed=alm_settings["seed"],
+                )
+                mean_curve = paths_curve.mean(axis=0)
+                scenario_curves = {name: fn(mean_curve) for name, fn in DEFAULT_SCENARIOS.items()}
+                records = []
+                for sc_name, curve in scenario_curves.items():
+                    pv_assets = _pv_cashflows(assets_df, t_curve, curve)
+                    pv_passives = _pv_cashflows(passives_df, t_curve, curve)
+                    records.append(
+                        {
+                            "Cenario": sc_name,
+                            "PV ativos": pv_assets,
+                            "PV passivos": pv_passives,
+                            "PV líquido": pv_assets - pv_passives,
+                            "Duration ativos": _duration(assets_df, t_curve, curve),
+                            "Duration passivos": _duration(passives_df, t_curve, curve),
+                        }
+                    )
+                df_alm = pd.DataFrame(records).set_index("Cenario")
+                st.dataframe(
+                    df_alm.style.format(
+                        {
+                            "PV ativos": "{:,.0f}",
+                            "PV passivos": "{:,.0f}",
+                            "PV líquido": "{:,.0f}",
+                            "Duration ativos": "{:.2f}",
+                            "Duration passivos": "{:.2f}",
+                        }
+                    )
+                )
+                st.caption("PV líquido por cenário (positivo = superávit dos ativos).")
+                st.bar_chart(df_alm["PV líquido"])
+                fig_curve, ax_curve = plt.subplots(figsize=(7, 4))
+                for sc_name, curve in scenario_curves.items():
+                    ax_curve.plot(t_curve, curve, label=sc_name)
+                ax_curve.set(xlabel="Tempo", ylabel="Taxa média", title="Curvas simuladas + choques")
+                ax_curve.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
+                ax_curve.legend(loc="upper right", fontsize="small")
+                st.pyplot(fig_curve)
+                net_base = (
+                    assets_df.groupby("time")["amount"].sum()
+                    - passives_df.groupby("time")["amount"].sum()
+                ).reset_index(name="net_amount")
+                net_base = net_base.set_index("time")
+                st.caption("Fluxo líquido (ativos - passivos) por bucket de tempo.")
+                st.bar_chart(net_base)
+            except Exception as exc:
+                st.error(f"Erro ao calcular cenários ALM: {exc}")
     if show_validation and tab_val is not None and val_maturities:
         with tab_val:
             st.markdown("### Validação analítica")

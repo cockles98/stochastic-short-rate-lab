@@ -138,6 +138,20 @@ Execute-os na raiz do projeto:
 
 Cada script gera trajetorias (3 presets), histograma terminal, estudo de convergencia e estrutura a termo (maturidades de 0.25 a 10 anos, 40 pontos, 5k paths).
 
+### Casos de uso (examples/)
+
+- `examples/price_swaption_mc.py`: precifica payer/receiver swaptions via Monte Carlo, aceitando modelo (CIR, Vasicek, Hull-White), preset, tenor, strike, frequência e número de caminhos. O script imprime um JSON com preço e erro padrão (`stderr`) e pode salvar em arquivo passando `--out`.
+  ```bash
+  python examples/price_swaption_mc.py --model Vasicek --preset baseline --kind payer --exercise 2 --tenor 3 --strike 0.04 --paths 20000
+  ```
+  Interprete o resultado comparando o `price` com proxies analíticas (quando disponíveis) ou usando Hull-White para incorporar shifts específicos.
+
+- `examples/alm_scenarios.py`: gera cenários ALM a partir de um JSON simples contendo cash flows de ativos e passivos. Aplica choques determinísticos (parallel shift, steepener, flattener, ramp) e calcula `pv_assets`, `pv_passives`, `pv_net` e `duration_gap` por cenário.
+  ```bash
+  python examples/alm_scenarios.py --cashflows examples/data/sample_cashflows.json --paths 1000 --steps-per-year 52 --horizon 6 --out examples/output/alm_report.csv
+  ```
+  Use o CSV final para analisar o efeito dos choques: `pv_net` indica o impacto econômico, enquanto `duration_gap` evidencia descasamentos de sensibilidade entre ativos e passivos.
+
 ## Testes e notebooks
 
 Rode `pytest` para validar o pacote. O notebook `notebooks/projeto1_demo.ipynb` demonstra trajetorias, convergencia e precificacao usando os modulos `cir`.
