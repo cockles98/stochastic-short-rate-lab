@@ -66,6 +66,7 @@ Todos os arquivos ficam em `figures/`, enquanto tabelas (`bond_price_*.csv`, `te
   * tabela `MC vs analítico` para zero-coupons e gráfico de erro × maturidade;
   * gráfico log–log do erro vs passo (`zero_coupon_error_by_steps`);
   * métricas de momentos (`E[r_T]`, `Var[r_T]`) calculadas tanto por simulação quanto pela solução analítica.
+- Um multiseletor que habilita comparativos lado a lado entre **CIR**, **Vasicek** (OU) e **Hull-White**; a aba “Comparativo modelos” sobrepõe médias temporais, métricas terminais e curvas zero-coupon analíticas, destacando diferenças de volatilidade, reversão à média e níveis deslocados.
 
 Execute com:
 
@@ -84,6 +85,23 @@ Além do dashboard, o pacote possui utilitários de comparação:
 - `report/relatorio_base.md` resume metodologia, convergência e estrutura a termo.
 
 Essas peças podem alimentar relatórios técnicos ou slides de portfólio usando os CSVs/figuras já gerados (`data/`, `figures/`).
+
+### Benchmark multi-modelos e trade-offs
+
+O diretório `benchmarks/` centraliza scripts e modelos auxiliares para comparar processos de taxa curta. O script
+
+```bash
+python benchmarks/scripts/run_benchmark.py --preset baseline --maturities 0.5,1,2,5 --hw-shift "0:0.0;5:0.01;10:0.015"
+```
+
+gera `benchmarks/data/benchmark_<preset>.csv` com preços analíticos/Monte Carlo e métricas de momentos para CIR, Vasicek e Hull-White. Use esse material para discutir:
+
+- **Volatilidade**: Vasicek/Hull-White permitem taxas negativas devido à difusão aditiva, resultando em caudas mais largas que o CIR;
+- **Reversão à média**: a mesma `kappa` produz trajetórias visivelmente diferentes quando combinada à restrição de positividade do CIR;
+- **Facilidade de calibração**: Vasicek/Hull-White ajustam qualquer curva inicial via parâmetros lineares ou shift determinístico; o CIR exige respeitar a condição de Feller e apresenta maior acoplamento dos parâmetros;
+- **Term structure**: curvas zero-coupon podem ser comparadas diretamente na nova aba do Streamlit para evidenciar deslocamentos e inclinações.
+
+Detalhes adicionais sobre a organização do benchmark estão em `benchmarks/README.md`.
 
 ## Calibração e dados de mercado
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Generic, Iterable, Sequence, TypeVar
 
 import numpy as np
 from scipy.optimize import minimize
@@ -12,6 +12,8 @@ from .analytics import zero_coupon_price
 from .params import CIRParams
 
 __all__ = ["calibrate_zero_coupon_curve", "price_curve"]
+
+ParamsT = TypeVar("ParamsT")
 
 
 def price_curve(params: CIRParams, maturities: Sequence[float]) -> np.ndarray:
@@ -26,8 +28,8 @@ def price_curve(params: CIRParams, maturities: Sequence[float]) -> np.ndarray:
 
 
 @dataclass
-class CalibrationResult:
-    params: CIRParams
+class CalibrationResult(Generic[ParamsT]):
+    params: ParamsT
     success: bool
     message: str
     fun: float
