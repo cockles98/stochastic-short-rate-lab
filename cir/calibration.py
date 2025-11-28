@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic, Iterable, Sequence, TypeVar
+from pathlib import Path
+from typing import Generic, Iterable, Literal, Sequence, TypeVar
 
 import numpy as np
 from scipy.optimize import minimize
@@ -11,7 +12,12 @@ from scipy.optimize import minimize
 from .analytics import zero_coupon_price
 from .params import CIRParams
 
-__all__ = ["calibrate_zero_coupon_curve", "price_curve"]
+try:  # pragma: no cover - optional dependency
+    from data_loaders.curves import load_curve_components
+except ImportError:  # pragma: no cover - optional dependency
+    load_curve_components = None
+
+__all__ = ["calibrate_zero_coupon_curve", "price_curve", "market_curve_from_file"]
 
 ParamsT = TypeVar("ParamsT")
 
@@ -55,7 +61,10 @@ def _objective_function(
         params = _sanitize_parameters(x)
         penalty_loss = penalty * 10.0
 
-    model_prices = price_curve(params, maturities)
+    try:
+        model_prices = price_curve(params, maturities)
+    except (OverflowError, ValueError):
+        return 1e12
     residuals = (model_prices - market) * weights
     loss = float(np.sum(residuals**2)) + penalty_loss
 
@@ -128,3 +137,27 @@ def calibrate_zero_coupon_curve(
         nit=result.nit,
         raw_solution=result.x,
     )
+
+
+def market_curve_from_file(
+    curve_file: str | Path,
+    curve_kind: Literal["prefixados", "ipca"] = "prefixados",
+    column: str | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+    """Return maturities (years), prices and yields from a curve CSV."""
+
+    if load_curve_components is None:  # pragma: no cover
+        raise ImportError("data_loaders.curves não está disponível.")
+    components = load_curve_components(curve_file)
+    if curve_kind == "prefixados":
+        df = components.prefixados.dropna()
+        rates = df["Taxa (%a.a.)"].astype(float) / 100.0
+    elif curve_kind == "ipca":
+        col = column or "ETTJ PREF"
+        df = components.ettj.dropna(subset=[col])
+        rates = df[col].astype(float) / 100.0
+    else:
+        raise ValueError("curve_kind deve ser 'prefixados' ou 'ipca'.")
+    maturities = df["Vertices"].astype(float) / 252.0
+    prices = np.exp(-rates.to_numpy() * maturities.to_numpy())
+    return maturities.to_numpy(), prices, rates.to_numpy(), components.ref_date

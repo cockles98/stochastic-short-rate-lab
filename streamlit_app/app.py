@@ -14,9 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from benchmarks.models import (
     HullWhiteParams,
+    VasicekParams,
     calibrate_vasicek_curve,
-    get_hull_white_preset,
-    get_vasicek_preset,
     hull_white_bond_price_mc,
     hull_white_mean_short_rate,
     hull_white_price_curve,
@@ -32,9 +31,9 @@ from benchmarks.models import (
 )
 from cir.analytics import mean_short_rate, variance_short_rate, zero_coupon_price
 from cir.bonds import bond_price_mc
-from cir.calibration import calibrate_zero_coupon_curve, price_curve
+from cir.calibration import calibrate_zero_coupon_curve, price_curve, market_curve_from_file
 from cir.convergence import strong_order_convergence
-from cir.params import get_params_preset
+from cir.params import CIRParams
 from cir.simulate import simulate_paths
 from cir.validation import (
     compare_moments,
@@ -43,6 +42,8 @@ from cir.validation import (
 )
 from examples.utils.scenario_builders import DEFAULT_SCENARIOS
 from examples.utils.swap_helpers import SwapSchedule, swaption_payoff
+from data_loaders.curves import load_curve_components
+from data_loaders.selic import get_latest_rate, load_selic_csv
 
 
 def _integrated_discount(path: np.ndarray, t: np.ndarray, T: float) -> float:
@@ -51,6 +52,23 @@ def _integrated_discount(path: np.ndarray, t: np.ndarray, T: float) -> float:
         return 1.0
     integral = np.trapz(path[mask], t[mask])
     return float(math.exp(-integral))
+
+
+def _replace_r0(params, new_r0: float):
+    if isinstance(params, CIRParams):
+        return CIRParams(kappa=params.kappa, theta=params.theta, sigma=params.sigma, r0=new_r0)
+    if isinstance(params, VasicekParams):
+        return VasicekParams(kappa=params.kappa, theta=params.theta, sigma=params.sigma, r0=new_r0)
+    if isinstance(params, HullWhiteParams):
+        return HullWhiteParams(
+            kappa=params.kappa,
+            theta=params.theta,
+            sigma=params.sigma,
+            r0=new_r0,
+            shift_times=params.shift_times,
+            shift_values=params.shift_values,
+        )
+    return params
 
 
 def price_swaption_for_model(
@@ -89,6 +107,48 @@ def price_swaption_for_model(
     return price, stderr
 
 
+def calibrate_models_from_curve(curve_file: str | Path, curve_kind: str) -> tuple[dict[str, object], str]:
+    mats, prices, market_rates, ref_date = market_curve_from_file(curve_file, curve_kind=curve_kind)
+    cir_initial = CIRParams(kappa=1.0, theta=0.05, sigma=0.2, r0=0.05)
+    cir_result = calibrate_zero_coupon_curve(mats, prices, cir_initial)
+    vas_initial = VasicekParams(kappa=1.0, theta=0.05, sigma=0.15, r0=cir_initial.r0)
+    vas_result = calibrate_vasicek_curve(mats, prices, vas_initial)
+    vas_prices = vasicek_price_curve(vas_result.params, mats)
+    vas_yields = -np.log(np.maximum(vas_prices, 1e-12)) / np.maximum(mats, 1e-6)
+    shift_times = np.insert(mats, 0, 0.0)
+    shift_values = np.insert(market_rates - vas_yields, 0, 0.0)
+    hull_params = HullWhiteParams(
+        kappa=vas_result.params.kappa,
+        theta=vas_result.params.theta,
+        sigma=vas_result.params.sigma,
+        r0=vas_result.params.r0,
+        shift_times=shift_times,
+        shift_values=shift_values,
+    )
+    params = {
+        "CIR": cir_result.params,
+        "Vasicek": vas_result.params,
+        "Hull-White": hull_params,
+    }
+    return params, ref_date
+
+
+@st.cache_data(show_spinner=False)
+def load_curve_components_cached(curve_file: str | Path):
+    return load_curve_components(curve_file)
+
+
+@st.cache_data(show_spinner=False)
+def calibrate_models_cached(curve_file: str | Path, curve_kind: str):
+    return calibrate_models_from_curve(curve_file, curve_kind)
+
+
+@st.cache_data(show_spinner=False)
+def load_selic_cached(real_selic_file: str | Path):
+    df = load_selic_csv(real_selic_file)
+    return df, get_latest_rate(df)
+
+
 def _build_cashflow_df(data: list[dict], label: str) -> pd.DataFrame:
     df = pd.DataFrame(data)
     if df.empty or not {"time", "amount"} <= set(df.columns):
@@ -113,6 +173,143 @@ def _duration(df: pd.DataFrame, times: np.ndarray, rates: np.ndarray) -> float:
     return float(weighted / pv)
 
 
+def _read_csv_fallback(path: Path) -> pd.DataFrame:
+    """Load CSV tolerating encodings and separators (UTF-8/Latin-1/ISO + ;)."""
+
+    attempts = [
+        {},
+        {"sep": ";"},
+        {"encoding": "latin-1"},
+        {"encoding": "latin-1", "sep": ";"},
+        {"encoding": "ISO-8859-1", "engine": "python"},
+        {"encoding": "ISO-8859-1", "engine": "python", "sep": ";"},
+    ]
+    last_exc: Exception | None = None
+    for opts in attempts:
+        try:
+            return pd.read_csv(path, **opts)
+        except Exception as exc:  # keep last error for context
+            last_exc = exc
+            continue
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Falha ao ler CSV.")
+
+
+def _parse_rate_fraction(series: pd.Series) -> pd.Series:
+    """Parse rates to fraction handling . or , as decimal and auto-percent."""
+
+    def to_float(val: object) -> float:
+        s = str(val).strip()
+        if not s:
+            return float("nan")
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return float("nan")
+
+    vals = series.map(to_float).to_numpy(dtype=float)
+    finite = vals[np.isfinite(vals)]
+    if finite.size and np.nanmedian(finite) > 1:
+        vals = vals / 100.0
+    return pd.Series(vals)
+
+
+def _parse_rate_fraction(series: pd.Series) -> pd.Series:
+    """Parse rates to fraction handling '.', ',' and auto-percent."""
+
+    def to_float(val: object) -> float:
+        s = str(val).strip()
+        if not s:
+            return float("nan")
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return float("nan")
+
+    vals = series.map(to_float).to_numpy(dtype=float)
+    finite = vals[np.isfinite(vals)]
+    if finite.size and np.nanmedian(finite) > 1:
+        vals = vals / 100.0
+    return pd.Series(vals)
+
+
+def _extract_rate_column(df: pd.DataFrame) -> pd.Series:
+    """Return a numeric rate column from common headers."""
+
+    norm_map = {col.lower().strip(): col for col in df.columns}
+    for key in ["rate", "rate_annual", "taxa", "taxa (% a.a.)", "valor"]:
+        if key in norm_map:
+            return _parse_rate_fraction(df[norm_map[key]])
+    raise ValueError(f"CSV precisa conter a coluna 'rate'. Colunas encontradas: {list(df.columns)}")
+
+
+def _get_rate_series(df: pd.DataFrame, path: Path) -> pd.Series:
+    """Try to obtain a rate series; fallback to CurvaZero parser when applicable."""
+
+    try:
+        return _extract_rate_column(df)
+    except ValueError:
+        pass
+    return pd.Series(dtype=float)
+
+
+def _curve_from_curva_zero(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """Extract maturities (years) and prices from CurvaZero_*.csv."""
+
+    try:
+        components = load_curve_components(path)
+    except Exception:
+        return None
+    pref = components.prefixados
+    if pref.empty or "Vertices" not in pref.columns or "Taxa (%a.a.)" not in pref.columns:
+        return None
+    mats = pref["Vertices"].astype(float) / 252.0
+    rates = _parse_rate_fraction(pref["Taxa (%a.a.)"])
+    exponent = -np.clip(rates.to_numpy() * mats.to_numpy(), -50, 50)
+    prices = np.exp(exponent)
+    mask = np.isfinite(prices) & np.isfinite(mats) & (prices > 0) & (mats > 0)
+    if not mask.any():
+        return None
+    return mats.to_numpy()[mask], prices[mask]
+
+
+def _build_market_curve(data_path: Path, calib_maturities: str, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Return maturities and market prices using either CurvaZero or flat DI curve."""
+
+    curve = _curve_from_curva_zero(data_path)
+    if curve is not None:
+        mats, prices = curve
+        mask = np.isfinite(mats) & np.isfinite(prices) & (mats > 0) & (prices > 0)
+        mats, prices = mats[mask], prices[mask]
+        if mats.size == 0:
+            raise ValueError("Curva real nao possui maturidades/precos positivos.")
+        return mats, prices
+
+    rate_series = _get_rate_series(df, data_path).dropna()
+    if rate_series.empty:
+        raise ValueError(f"CSV precisa conter a coluna 'rate'. Colunas encontradas: {list(df.columns)}")
+
+    mats = np.array([float(x.strip()) for x in calib_maturities.split(",") if x.strip()])
+    if mats.size == 0 or np.any(mats <= 0):
+        raise ValueError("Forneca ao menos uma maturidade.")
+    last_rate = float(rate_series.tail(1))
+    prices = np.exp(-np.clip(last_rate * mats, -50, 50))
+    mask = np.isfinite(prices) & (prices > 0)
+    if not mask.any():
+        raise ValueError("Precos de mercado invalidos apos leitura do CSV.")
+    return mats[mask], prices[mask]
+    raise ValueError(f"CSV precisa conter a coluna 'rate'. Colunas encontradas: {list(df.columns)}")
+
+
 SAMPLE_CASHFLOWS_JSON = json.dumps(
     {
         "assets": [
@@ -131,7 +328,6 @@ SAMPLE_CASHFLOWS_JSON = json.dumps(
 
 MODEL_REGISTRY = {
     "CIR": {
-        "get_params": get_params_preset,
         "schemes": ["em", "milstein"],
         "scheme_help": "EM = Euler-Maruyama, Milstein adiciona correção para reduzir viés perto de r=0.",
         "default_scheme_index": 1,
@@ -147,7 +343,6 @@ MODEL_REGISTRY = {
         "supports_calibration": True,
     },
     "Vasicek": {
-        "get_params": get_vasicek_preset,
         "schemes": ["em", "exact"],
         "scheme_help": "EM aproxima com passos discretos; Exact usa a solução fechada do OU.",
         "default_scheme_index": 1,
@@ -163,7 +358,6 @@ MODEL_REGISTRY = {
         "supports_calibration": True,
     },
     "Hull-White": {
-        "get_params": get_hull_white_preset,
         "schemes": ["em", "exact"],
         "scheme_help": "Modelo deslocado: use Exact para aproveitar a solução fechada do OU base.",
         "default_scheme_index": 1,
@@ -212,12 +406,6 @@ with sidebar:
     compare_models_ordered = list(dict.fromkeys(compare_selection))
     if model_name not in compare_models_ordered:
         compare_models_ordered.insert(0, model_name)
-    preset = st.selectbox(
-        "Preset",
-        ["baseline", "slow-revert", "fast-revert"],
-        index=0,
-        help="Selecione um conjunto de parâmetros iniciais para o modelo escolhido.",
-    )
     scheme = st.selectbox(
         "Esquema",
         model_cfg["schemes"],
@@ -254,6 +442,17 @@ with sidebar:
         step=1,
         help="Usado para reter reprodutibilidade. Mudar o seed muda os sorteios.",
     )
+    use_real_data = st.checkbox("Usar dados reais (curva + SELIC)", value=False)
+    real_curve_kind = "prefixados"
+    real_curve_file = None
+    real_selic_file = None
+    if use_real_data:
+        real_curve_file = st.text_input("Arquivo Curva Zero", value="data/real_data/CurvaZero_17112025.csv")
+        real_curve_kind = st.selectbox("Tipo de curva", ["prefixados", "ipca"])
+        real_selic_file = st.text_input("Arquivo SELIC diária", value="data/real_data/taxa_selic_apurada.csv")
+    else:
+        st.error("Ative 'Usar dados reais' e informe os CSVs para continuar.")
+        st.stop()
 
     st.markdown("---")
     st.subheader("Ofertas adicionais")
@@ -365,19 +564,12 @@ with sidebar:
         )
 
     data_file = None
-    calib_initial = "baseline"
     calib_maturities = "0.25,0.5,1.0,2.0,3.0,5.0"
     if show_calibration:
         data_file = st.text_input(
             "Arquivo CSV da curva DI",
-            value="data/raw_di_curve.csv",
+            value="data/real_data/CurvaZero_17112025.csv",
             help="Formato esperado: colunas 'date' e 'rate' (fração). Use scripts/fetch_di_curve.py.",
-        )
-        calib_initial = st.selectbox(
-            "Preset inicial (calibração)",
-            ["baseline", "slow-revert", "fast-revert"],
-            index=0,
-            help="Serve como chute inicial; o algoritmo move-se a partir daqui.",
         )
         calib_maturities = st.text_input(
             "Maturidades (anos, separadas por vírgula)",
@@ -386,11 +578,29 @@ with sidebar:
         )
 
 st.caption(
-    "Use a coluna lateral para escolher preset/esquema e habilitar análises adicionais. "
+    "Use a coluna lateral para escolher o modelo/esquema, carregar dados reais e habilitar análises adicionais. "
     "Cada aba abaixo descreve o que está sendo exibido para facilitar a interpretação."
 )
 
-params = model_cfg["get_params"](preset)
+params_by_model: dict[str, object] = {}
+selic_df = None
+curve_components = None
+real_curve_date = None
+try:
+    curve_components = load_curve_components_cached(real_curve_file)
+    params_by_model, real_curve_date = calibrate_models_cached(real_curve_file, real_curve_kind)
+except Exception as exc:
+    st.error(f"Falha ao calibrar a partir da curva real: {exc}")
+    st.stop()
+try:
+    selic_df, latest_rate = load_selic_cached(real_selic_file)
+    params_by_model = {name: _replace_r0(p, latest_rate) for name, p in params_by_model.items()}
+except Exception as exc:
+    st.error(f"Não foi possível carregar a SELIC: {exc}")
+params = params_by_model.get(model_name)
+if params is None:
+    st.error(f"Parâmetros indisponíveis para {model_name}.")
+    st.stop()
 n_steps = int(T * steps_per_year)
 paths = None
 
@@ -419,7 +629,9 @@ if paths is not None:
         if cmp_model == model_name or cmp_model in comparison_results:
             continue
         cfg = MODEL_REGISTRY[cmp_model]
-        cmp_params = cfg["get_params"](preset)
+        cmp_params = params_by_model.get(cmp_model)
+        if cmp_params is None:
+            continue
         cmp_seed = int(seed) + (idx + 1) * 97
         model_scheme = scheme if scheme in cfg["schemes"] else cfg["schemes"][cfg["default_scheme_index"]]
         try:
@@ -444,6 +656,8 @@ if paths is not None:
     tabs = ["Trajetorias", "Distribuicao terminal", "B(0,T) e yield", "Convergencia"]
     if has_comparison:
         tabs.append("Comparativo modelos")
+    if use_real_data and curve_components is not None:
+        tabs.append("Curva real")
     if swaption_settings:
         tabs.append("Swaption MC")
     if alm_settings:
@@ -459,6 +673,7 @@ if paths is not None:
     tab_term = tab_lookup["B(0,T) e yield"]
     tab_conv = tab_lookup["Convergencia"]
     tab_compare = tab_lookup.get("Comparativo modelos")
+    tab_curve_real = tab_lookup.get("Curva real")
     tab_swaption = tab_lookup.get("Swaption MC")
     tab_alm = tab_lookup.get("Cenarios ALM")
     tab_val = tab_lookup.get("Validacao analitica")
@@ -467,7 +682,7 @@ if paths is not None:
     with tab_paths:
         st.markdown("### Trajetórias simuladas")
         st.write(
-            f"Cada linha representa uma realização do processo {model_name} com o preset selecionado. "
+            f"Cada linha representa uma realização do processo {model_name} calibrado na curva carregada. "
             "A tabela abaixo exibe a média, desvio e mínimos/máximos no tempo final."
         )
         df_paths = pd.DataFrame(
@@ -592,7 +807,7 @@ if paths is not None:
         with tab_compare:
             st.markdown("### Comparativo entre modelos")
             st.write(
-                "As curvas abaixo usam o mesmo preset e horizonte. A primeira figura mostra a média temporal "
+                "As curvas abaixo usam a mesma curva real e horizonte. A primeira figura mostra a média temporal "
                 "de cada modelo, enquanto a segunda compara as curvas zero-coupon analíticas."
             )
             fig_cmp, ax_cmp = plt.subplots(figsize=(7, 4))
@@ -631,10 +846,46 @@ if paths is not None:
             ax_curve.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
             ax_curve.legend()
             st.pyplot(fig_curve)
+    if tab_curve_real is not None and curve_components is not None:
+        with tab_curve_real:
+            st.markdown("### Curva real importada")
+            st.write(f"Arquivo: `{real_curve_file}` | Data de referência: {curve_components.ref_date}")
+            ettj_df = curve_components.ettj.copy()
+            if not ettj_df.empty:
+                ettj_df["Anos"] = ettj_df["Vertices"] / 252.0
+                st.subheader("ETTJ (IPCA vs Prefixado)")
+                st.dataframe(ettj_df)
+                fig_real, ax_real = plt.subplots(figsize=(7, 4))
+                ax_real.plot(ettj_df["Anos"], ettj_df["ETTJ IPCA"], label="IPCA")
+                ax_real.plot(ettj_df["Anos"], ettj_df["ETTJ PREF"], label="Prefixado")
+                ax_real.set(xlabel="Anos", ylabel="Taxa (% a.a.)", title="ETTJ real")
+                ax_real.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
+                ax_real.legend()
+                st.pyplot(fig_real)
+            prefix_df = curve_components.prefixados.copy()
+            if not prefix_df.empty:
+                prefix_df["Anos"] = prefix_df["Vertices"] / 252.0
+                st.subheader("Curva prefixada (Circular 3.361)")
+                st.line_chart(prefix_df.set_index("Anos")["Taxa (%a.a.)"])
+            residuals_df = curve_components.residuals.copy()
+            if not residuals_df.empty:
+                st.subheader("Erro título a título")
+                residuals_df["Erro (%a.a.)"] = (
+                    residuals_df["Erro (%a.a.)"]
+                    .astype(str)
+                    .str.replace(",", ".", regex=False)
+                    .astype(float)
+                )
+                residuals_df["Titulo/Venc"] = residuals_df["Titulo"] + " " + residuals_df["Vencimento"]
+                st.dataframe(residuals_df)
+                st.bar_chart(residuals_df.set_index("Titulo/Venc")["Erro (%a.a.)"])
+            if selic_df is not None:
+                st.subheader("Últimos valores da SELIC")
+                st.line_chart(selic_df.set_index("date")["rate_annual"])
     if swaption_settings and tab_swaption is not None:
         with tab_swaption:
             st.markdown("### Precificação de swaption via Monte Carlo")
-            st.caption("Os resultados utilizam os mesmos presets escolhidos no menu lateral. Para reduzir o tempo, mantenha o número de caminhos moderado.")
+            st.caption("Os resultados utilizam os mesmos parâmetros calibrados a partir da curva real.")
             schedule = SwapSchedule.from_tenor(
                 exercise=swaption_settings["exercise"],
                 tenor=swaption_settings["tenor"],
@@ -644,7 +895,9 @@ if paths is not None:
             for idx, name in enumerate(compare_models_ordered):
                 cfg = MODEL_REGISTRY[name]
                 try:
-                    params_cmp = cfg["get_params"](preset)
+                    params_cmp = params_by_model.get(name)
+                    if params_cmp is None:
+                        continue
                     price_mc, stderr_mc = price_swaption_for_model(
                         model_name=name,
                         model_cfg=cfg,
@@ -691,7 +944,9 @@ if paths is not None:
                 alm_steps = alm_settings["steps_per_year"]
                 n_steps = int(horizon * alm_steps)
                 cfg = MODEL_REGISTRY[model_name]
-                params_alm = cfg["get_params"](preset)
+                params_alm = params_by_model.get(model_name)
+                if params_alm is None:
+                    raise ValueError("Parâmetros indisponíveis para o modelo selecionado.")
                 scheme_alm = scheme if scheme in cfg["schemes"] else cfg["schemes"][cfg["default_scheme_index"]]
                 t_curve, paths_curve = cfg["simulate"](
                     scheme=scheme_alm,
@@ -809,13 +1064,11 @@ if paths is not None:
                 data_path = Path(data_file)
                 if not data_path.exists():
                     raise FileNotFoundError(f"Arquivo {data_path} não encontrado.")
-                df = pd.read_csv(data_path)
-                if "rate" not in df.columns:
-                    raise ValueError("CSV precisa conter a coluna 'rate'.")
-                last_rate = float(df["rate"].tail(1))
-                mats = [float(x.strip()) for x in calib_maturities.split(",") if x.strip()]
-                market_prices = np.exp(-last_rate * np.asarray(mats))
-                initial_params = model_cfg["get_params"](calib_initial)
+                df = _read_csv_fallback(data_path)
+                mats, market_prices = _build_market_curve(data_path, calib_maturities, df)
+                initial_params = params_by_model.get("CIR")
+                if initial_params is None:
+                    raise ValueError("Parâmetros do CIR não disponíveis.")
                 calib_fn = model_cfg.get("calibrate")
                 price_curve_fn = model_cfg.get("price_curve")
                 if calib_fn is None or price_curve_fn is None:

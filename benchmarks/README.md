@@ -44,4 +44,21 @@ O script produz `benchmarks/data/benchmark_<preset>.csv` com colunas:
 - **Swaptions**: os scripts em `examples/price_swaption_mc.py` e os módulos de simulação permitem comparar o preço Monte Carlo entre os três modelos. Observe como a difusão gaussiana de Vasicek/Hull-White gera premissas maiores para opções fora do dinheiro (devido à probabilidade de taxas negativas). Use o benchmark para exportar as curvas e validar os inputs antes da precificação.
 - **ALM**: `examples/alm_scenarios.py` aplica choques determinísticos nas curvas e calcula `pv_net` e `duration_gap` por cenário. Combine com o CSV do benchmark para explicar por que determinados modelos produzem gaps maiores/menores (por exemplo, Hull-White com shift personalizado segue mais de perto a curva inicial, útil para stress tests realistas).
 
+## Dados reais
+
+Para alimentar o benchmark com curvas reais:
+
+1. Coloque o arquivo `CurvaZero_*.csv` (mesmo formato usado no app) em `data/real_data/`.
+2. Execute o script com a flag `--curve-file` para calibrar os modelos diretamente nessa curva:
+   ```bash
+   python benchmarks/scripts/run_benchmark.py \
+     --curve-file data/real_data/CurvaZero_17112025.csv \
+     --curve-kind prefixados \
+     --maturities 0.5,1,2,5 \
+     --n-paths 2000
+   ```
+3. O script salvará `benchmark_<preset>.csv` com os resultados e `calibration_meta_<data>.json` com os parâmetros ajustados e metadados (arquivo de origem, data de referência, shift do Hull-White).
+
+Essas curvas também podem ser carregadas no Streamlit marcando “Usar dados reais (curva + SELIC)” na sidebar. O app exibirá a ETTJ real, os erros título a título e usará o último valor da SELIC diária como `r0`.
+
 Essas comparações alimentam a nova aba “Comparativo modelos” do Streamlit e fornecem narrativa para relatórios ou discussões sobre model risk. Ajuste o shift do Hull-White e os presets para ilustrar volatilidade relativa, convergência e aderência à curva zero-coupon.

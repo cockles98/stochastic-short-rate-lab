@@ -17,12 +17,15 @@ def zero_coupon_price(params: CIRParams, maturity: float) -> float:
     if params.sigma <= 0 or params.kappa <= 0:
         raise ValueError("kappa and sigma must be positive for analytical price.")
 
-    gamma = math.sqrt(params.kappa ** 2 + 2 * params.sigma ** 2)
-    numerator = 2 * gamma * math.exp((params.kappa + gamma) * maturity / 2)
-    denominator = (params.kappa + gamma) * (math.exp(gamma * maturity) - 1) + 2 * gamma
-    A = (numerator / denominator) ** (2 * params.kappa * params.theta / params.sigma ** 2)
-    B = 2 * (math.exp(gamma * maturity) - 1) / denominator
-    return A * math.exp(-B * params.r0)
+    try:
+        gamma = math.sqrt(params.kappa ** 2 + 2 * params.sigma ** 2)
+        numerator = 2 * gamma * math.exp((params.kappa + gamma) * maturity / 2)
+        denominator = (params.kappa + gamma) * (math.exp(gamma * maturity) - 1) + 2 * gamma
+        A = (numerator / denominator) ** (2 * params.kappa * params.theta / params.sigma ** 2)
+        B = 2 * (math.exp(gamma * maturity) - 1) / denominator
+        return A * math.exp(-B * params.r0)
+    except OverflowError:
+        return math.inf
 
 
 def mean_short_rate(params: CIRParams, T: float) -> float:
