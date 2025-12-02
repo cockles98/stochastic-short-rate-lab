@@ -19,7 +19,7 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 
 * **Pipeline Completo:** Simulação (Euler-Maruyama e Milstein), Precificação de Zeros e Bonds, e Calibração.
 * **Rigor Matemático:** Validação da **Condição de Feller** ($2\kappa\theta > \sigma^2$) e estimativa de ordem de convergência forte.
-* **Dados Reais:** Scripts automatizados para capturar a curva DI via API do Banco Central/SGS.
+* **Dados Reais:** Utilização de dados brasileiros reais da curva DI e taxa Selic.
 * **Interatividade:** Dashboard **Streamlit** para análise de sensibilidade e cenários de ALM (Asset Liability Management).
 
 ---
@@ -42,6 +42,18 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 *Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
 <div align="center">
   <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="600"/>
+</div>
+
+### 3. Exposição dos Dados Econômicos
+*Demonstração gráfica dos dados da taxa selic, erros dos títulos e da curva pré-fixada.*
+<div align="center">
+  <img src="figures/cir/selic.png" alt="Convergence Analysis" width="600"/>
+</div>
+<div align="center">
+  <img src="figures/cir/titles-erros.png" alt="Convergence Analysis" width="600"/>
+</div>
+<div align="center">
+  <img src="figures/cir/prefixed-curve.png" alt="Convergence Analysis" width="600"/>
 </div>
 
 ---
@@ -83,6 +95,8 @@ A maneira mais fácil de explorar o modelo.
 ```bash
 streamlit run streamlit_app/app.py
 ```
+
+> **Ou acessando diretamente o dashboard online através do [link](https://cockles98-stochastic-short-rate-lab-streamlit-appapp-slmkui.streamlit.app).**
 
 *Funcionalidades:* Calibração em tempo real, Comparativo Visual (CIR vs Vasicek), Cenários de Stress (ALM).
 
