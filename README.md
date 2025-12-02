@@ -84,6 +84,8 @@ A maneira mais fácil de explorar o modelo.
 streamlit run streamlit_app/app.py
 ```
 
+> **Ou acessando diretamente o o dashboard online através do [link](https://cockles98-stochastic-short-rate-lab-streamlit-appapp-slmkui.streamlit.app).**
+
 *Funcionalidades:* Calibração em tempo real, Comparativo Visual (CIR vs Vasicek), Cenários de Stress (ALM).
 
 ### Modo CLI (Linha de Comando)
