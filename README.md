@@ -41,19 +41,19 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 ### 2. Análise de Convergência
 *Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
 <div align="center">
-  <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="700"/>
 </div>
 
 ### 3. Exposição dos Dados Econômicos
 *Demonstração gráfica dos dados da taxa selic, erros dos títulos e da curva pré-fixada.*
 <div align="center">
-  <img src="figures/cir/selic-values.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/selic-values.png" alt="Convergence Analysis" width="700"/>
 </div>
 <div align="center">
-  <img src="figures/cir/titles-errors.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/titles-errors.png" alt="Convergence Analysis" width="700"/>
 </div>
 <div align="center">
-  <img src="figures/cir/prefixed-curve.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/prefixed-curve.png" alt="Convergence Analysis" width="700"/>
 </div>
 
 ---
