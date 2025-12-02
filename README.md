@@ -54,7 +54,7 @@ Onde a implementação garante a **positividade** da taxa e estabilidade numéri
 
 ```bash
 # 1. Clone o repositório
-git clone [https://github.com/seu-usuario/cir-short-rate-lab.git](https://github.com/seu-usuario/cir-short-rate-lab.git)
+git clone https://github.com/cockles98/cir-short-rate-lab.git
 cd cir-short-rate-lab
 
 # 2. Crie o ambiente virtual
@@ -65,17 +65,6 @@ source .venv/bin/activate  # Linux/Mac
 # 3. Instale as dependências
 pip install -r requirements.txt
 ```
-
-### 📥 Configuração de Dados (Opcional)
-
-Para utilizar dados reais da B3/Bacen no Dashboard:
-
-```bash
-# Baixa a curva DI mais recente automaticamente
-python scripts/fetch_di_curve.py --start 01/01/2023 --out data/raw_di_curve.csv
-```
-
-*O sistema já vem com dados de exemplo (`presets`) caso não queira baixar dados reais agora.*
 
 -----
 
