@@ -47,10 +47,10 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 ### 3. Exposição dos Dados Econômicos
 *Demonstração gráfica dos dados da taxa selic, erros dos títulos e da curva pré-fixada.*
 <div align="center">
-  <img src="figures/cir/selic.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/selic-values.png" alt="Convergence Analysis" width="600"/>
 </div>
 <div align="center">
-  <img src="figures/cir/titles-erros.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/titles-errors.png" alt="Convergence Analysis" width="600"/>
 </div>
 <div align="center">
   <img src="figures/cir/prefixed-curve.png" alt="Convergence Analysis" width="600"/>
