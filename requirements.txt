@@ -6,3 +6,4 @@ tqdm
 typer
 pytest
 streamlit
+altair

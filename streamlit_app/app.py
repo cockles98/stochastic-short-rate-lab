@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import altair as alt
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -44,6 +45,8 @@ from examples.utils.scenario_builders import DEFAULT_SCENARIOS
 from examples.utils.swap_helpers import SwapSchedule, swaption_payoff
 from data_loaders.curves import load_curve_components
 from data_loaders.selic import get_latest_rate, load_selic_csv
+
+alt.data_transformers.disable_max_rows()
 
 
 def _integrated_discount(path: np.ndarray, t: np.ndarray, T: float) -> float:
@@ -147,6 +150,144 @@ def calibrate_models_cached(curve_file: str | Path, curve_kind: str):
 def load_selic_cached(real_selic_file: str | Path):
     df = load_selic_csv(real_selic_file)
     return df, get_latest_rate(df)
+
+
+@st.cache_data(show_spinner="Calculando term structure...")
+def _term_structure_cached(
+    maturities: np.ndarray,
+    model_name: str,
+    params,
+    steps_per_year: int,
+    scheme: str,
+    n_paths: int,
+    base_seed: int,
+):
+    bond_price_fn = MODEL_REGISTRY[model_name]["bond_price"]
+    rows = []
+    for idx, maturity in enumerate(maturities):
+        steps = max(1, int(maturity * steps_per_year))
+        price, stderr = bond_price_fn(
+            params=params,
+            T=float(maturity),
+            n_paths=n_paths,
+            n_steps=steps,
+            seed=base_seed + idx,
+            scheme=scheme,
+        )
+        yld = 0.0 if maturity == 0 else -math.log(max(price, 1e-12)) / maturity
+        rows.append({"T": maturity, "price": price, "stderr": stderr, "zero_rate": yld})
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner="Rodando validação analítica...")
+def _validation_cached(params, val_maturities, val_paths, val_steps, seed, scheme: str):
+    price_df = compare_zero_coupon_prices(
+        params=params,
+        maturities=val_maturities,
+        n_paths=int(val_paths),
+        steps_per_year=int(val_steps),
+        seed=int(seed) * 3,
+    )
+    err_df = zero_coupon_error_by_steps(
+        params=params,
+        maturity=1.0,
+        n_paths=int(val_paths),
+        steps_list=[32, 64, 128, 256],
+        seed=int(seed) * 5,
+        scheme=scheme,
+    )
+    moment_result = compare_moments(
+        params=params,
+        T=1.0,
+        n_paths=int(val_paths),
+        n_steps=int(val_steps),
+        seed=int(seed) * 7,
+        scheme=scheme,
+    )
+    return price_df, err_df, moment_result
+
+
+@st.cache_data(show_spinner="Calculando swaption...")
+def _swaption_cached(
+    compare_models_ordered: list[str],
+    params_by_model: dict[str, object],
+    swaption_settings: dict,
+    seed: int,
+    scheme: str,
+):
+    rows = []
+    schedule = SwapSchedule.from_tenor(
+        exercise=swaption_settings["exercise"],
+        tenor=swaption_settings["tenor"],
+        freq=swaption_settings["freq"],
+    )
+    for idx, name in enumerate(compare_models_ordered):
+        cfg = MODEL_REGISTRY[name]
+        params_cmp = params_by_model.get(name)
+        if params_cmp is None:
+            continue
+        price_mc, stderr_mc = price_swaption_for_model(
+            model_name=name,
+            model_cfg=cfg,
+            params=params_cmp,
+            schedule=schedule,
+            strike=swaption_settings["strike"],
+            kind=swaption_settings["kind"],
+            n_paths=swaption_settings["paths"],
+            steps_per_year=swaption_settings["steps_per_year"],
+            exercise=swaption_settings["exercise"],
+            seed=int(seed) + idx * 17,
+            preferred_scheme=scheme,
+        )
+        rows.append({"Modelo": name, "Preco": price_mc, "Erro padrao": stderr_mc})
+    return pd.DataFrame(rows).set_index("Modelo") if rows else pd.DataFrame()
+
+
+@st.cache_data(show_spinner="Calculando cenários ALM...")
+def _alm_cached(
+    model_name: str,
+    params,
+    alm_settings: dict,
+    scheme: str,
+    assets_df: pd.DataFrame,
+    passives_df: pd.DataFrame,
+):
+    cfg = MODEL_REGISTRY[model_name]
+    scheme_alm = scheme if scheme in cfg["schemes"] else cfg["schemes"][cfg["default_scheme_index"]]
+    max_time = float(max(assets_df["time"].max(), passives_df["time"].max()))
+    horizon = max(1.0, max_time + 0.5)
+    n_steps = int(horizon * alm_settings["steps_per_year"])
+    t_curve, paths_curve = cfg["simulate"](
+        scheme=scheme_alm,
+        params=params,
+        T=horizon,
+        n_steps=n_steps,
+        n_paths=alm_settings["paths"],
+        seed=alm_settings["seed"],
+    )
+    mean_curve = paths_curve.mean(axis=0)
+    scenario_curves = {name: fn(mean_curve) for name, fn in DEFAULT_SCENARIOS.items()}
+    records = []
+    for sc_name, curve in scenario_curves.items():
+        pv_assets = _pv_cashflows(assets_df, t_curve, curve)
+        pv_passives = _pv_cashflows(passives_df, t_curve, curve)
+        records.append(
+            {
+                "Cenario": sc_name,
+                "PV ativos": pv_assets,
+                "PV passivos": pv_passives,
+                "PV liquido": pv_assets - pv_passives,
+                "Duration ativos": _duration(assets_df, t_curve, curve),
+                "Duration passivos": _duration(passives_df, t_curve, curve),
+            }
+        )
+    df_alm = pd.DataFrame(records).set_index("Cenario")
+    net_base = (
+        assets_df.groupby("time")["amount"].sum()
+        - passives_df.groupby("time")["amount"].sum()
+    ).reset_index(name="net_amount")
+    net_base = net_base.set_index("time")
+    return t_curve, scenario_curves, df_alm, net_base
 
 
 def _build_cashflow_df(data: list[dict], label: str) -> pd.DataFrame:
@@ -494,8 +635,8 @@ with sidebar:
         swaption_tenor = st.number_input("Tenor do swap (anos)", value=3.0, min_value=0.5, max_value=10.0, step=0.5)
         swaption_freq = st.selectbox("Frequência dos cupons (por ano)", [1, 2, 4], index=1)
         swaption_strike = st.number_input("Strike (taxa fixa)", value=0.04, format="%.3f")
-        swaption_paths = st.slider("Caminhos para swaption", min_value=500, max_value=5000, value=2000, step=500)
-        swaption_steps = st.slider("Passos/ano (swaption)", min_value=52, max_value=365, value=126, step=26)
+        swaption_paths = st.slider("Caminhos para swaption", min_value=500, max_value=5000, value=1000, step=500)
+        swaption_steps = st.slider("Passos/ano (swaption)", min_value=52, max_value=365, value=104, step=26)
         swaption_settings = {
             "kind": swaption_kind,
             "exercise": float(swaption_exercise),
@@ -509,8 +650,8 @@ with sidebar:
     alm_settings = None
     if show_alm_demo:
         alm_text = st.text_area("Fluxos (JSON)", value=SAMPLE_CASHFLOWS_JSON, height=200)
-        alm_paths = st.slider("Caminhos para curva média", min_value=200, max_value=5000, value=1000, step=200)
-        alm_steps = st.slider("Passos/ano (ALM)", min_value=52, max_value=365, value=126, step=26)
+        alm_paths = st.slider("Caminhos para curva média", min_value=200, max_value=5000, value=600, step=200)
+        alm_steps = st.slider("Passos/ano (ALM)", min_value=52, max_value=365, value=104, step=26)
         alm_seed = st.number_input("Seed (ALM)", value=99, step=1)
         alm_settings = {
             "json": alm_text,
@@ -527,9 +668,9 @@ with sidebar:
             "Caminhos para term structure",
             min_value=500,
             max_value=5000,
-            value=2000,
+            value=1000,
             step=500,
-            help="Mais caminhos = menos ruído nos preços/yields simulados.",
+            help="Mais caminhos = menos ruído nos preços/yields simulados. Valores maiores podem ser lentos.",
         )
 
     conv_paths = conv_steps = None
@@ -557,7 +698,7 @@ with sidebar:
             default=[0.5, 1.0, 2.0],
         )
         val_paths = st.number_input(
-            "Caminhos para validacao", value=5000, min_value=1000, max_value=200000, step=1000
+            "Caminhos para validacao", value=2000, min_value=1000, max_value=200000, step=1000
         )
         val_steps = st.slider(
             "Steps/ano para validacao", min_value=52, max_value=365, value=126, step=26
@@ -719,41 +860,33 @@ if paths is not None:
             "os dados também podem ser gerados pela CLI (`term-structure`)."
         )
         if show_term_structure and term_paths is not None:
-            bond_price_fn = model_cfg["bond_price"]
             maturities = np.linspace(0.25, 10.0, 40)
-            rows = []
-            base_seed = int(seed) * 100
-            for idx, maturity in enumerate(maturities):
-                steps = max(1, int(maturity * steps_per_year))
-                price, stderr = bond_price_fn(
+            run_term = st.button("Calcular term structure", key="btn_term_structure")
+            if run_term:
+                ts_df = _term_structure_cached(
+                    maturities=maturities,
+                    model_name=model_name,
                     params=params,
-                    T=float(maturity),
-                    n_paths=term_paths,
-                    n_steps=steps,
-                    seed=base_seed + idx,
+                    steps_per_year=steps_per_year,
                     scheme=scheme,
+                    n_paths=term_paths,
+                    base_seed=int(seed) * 100,
                 )
-                yld = 0.0 if maturity == 0 else -math.log(max(price, 1e-12)) / maturity
-                rows.append({
-                    "T": maturity,
-                    "price": price,
-                    "stderr": stderr,
-                    "zero_rate": yld,
-                })
-            ts_df = pd.DataFrame(rows)
-            st.dataframe(ts_df, use_container_width=True)
+                st.dataframe(ts_df, use_container_width=True)
 
-            fig, ax_price = plt.subplots(figsize=(7, 4))
-            ax_yield = ax_price.twinx()
-            ax_price.plot(ts_df["T"], ts_df["price"], "o-", color="#1f77b4", label="Preco")
-            ax_yield.plot(ts_df["T"], ts_df["zero_rate"], "s--", color="#d62728", label="Yield")
-            ax_price.set(xlabel="Maturidade", ylabel="Preco", title="Curva zero-coupon")
-            ax_yield.set(ylabel="Yield")
-            ax_price.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
-            lines = ax_price.get_lines() + ax_yield.get_lines()
-            labels = [line.get_label() for line in lines]
-            ax_price.legend(lines, labels, loc="best")
-            st.pyplot(fig)
+                fig, ax_price = plt.subplots(figsize=(7, 4))
+                ax_yield = ax_price.twinx()
+                ax_price.plot(ts_df["T"], ts_df["price"], "o-", color="#1f77b4", label="Preco")
+                ax_yield.plot(ts_df["T"], ts_df["zero_rate"], "s--", color="#d62728", label="Yield")
+                ax_price.set(xlabel="Maturidade", ylabel="Preco", title="Curva zero-coupon")
+                ax_yield.set(ylabel="Yield")
+                ax_price.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
+                lines = ax_price.get_lines() + ax_yield.get_lines()
+                labels = [line.get_label() for line in lines]
+                ax_price.legend(lines, labels, loc="best")
+                st.pyplot(fig)
+            else:
+                st.info("Clique em 'Calcular term structure' para gerar a curva Monte Carlo.")
         else:
             st.info("Ative a opcao 'Calcular term structure' no menu lateral para ver esta secao.")
 
@@ -864,21 +997,43 @@ if paths is not None:
                 st.pyplot(fig_real)
             prefix_df = curve_components.prefixados.copy()
             if not prefix_df.empty:
+                prefix_df = prefix_df.rename(columns={"Taxa (%a.a.)": "taxa_pct"})
                 prefix_df["Anos"] = prefix_df["Vertices"] / 252.0
                 st.subheader("Curva prefixada (Circular 3.361)")
-                st.line_chart(prefix_df.set_index("Anos")["Taxa (%a.a.)"])
+                chart_prefix = (
+                    alt.Chart(prefix_df.dropna(subset=["Anos", "taxa_pct"]))
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("Anos:Q", title="Anos"),
+                        y=alt.Y("taxa_pct:Q", title="Taxa (% a.a.)"),
+                        tooltip=["Anos", "taxa_pct"],
+                    )
+                    .properties(height=320)
+                )
+                st.altair_chart(chart_prefix, use_container_width=True)
             residuals_df = curve_components.residuals.copy()
             if not residuals_df.empty:
                 st.subheader("Erro título a título")
-                residuals_df["Erro (%a.a.)"] = (
-                    residuals_df["Erro (%a.a.)"]
+                residuals_df = residuals_df.rename(columns={"Erro (%a.a.)": "erro_pct"})
+                residuals_df["erro_pct"] = (
+                    residuals_df["erro_pct"]
                     .astype(str)
                     .str.replace(",", ".", regex=False)
                     .astype(float)
                 )
                 residuals_df["Titulo/Venc"] = residuals_df["Titulo"] + " " + residuals_df["Vencimento"]
                 st.dataframe(residuals_df)
-                st.bar_chart(residuals_df.set_index("Titulo/Venc")["Erro (%a.a.)"])
+                bar_resid = (
+                    alt.Chart(residuals_df.dropna(subset=["erro_pct"]))
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Titulo/Venc:N", sort=None, title="Título/Vencimento"),
+                        y=alt.Y("erro_pct:Q", title="Erro (% a.a.)"),
+                        tooltip=["Titulo", "Vencimento", "erro_pct"],
+                    )
+                    .properties(height=320)
+                )
+                st.altair_chart(bar_resid, use_container_width=True)
             if selic_df is not None:
                 st.subheader("Últimos valores da SELIC")
                 st.line_chart(selic_df.set_index("date")["rate_annual"])
@@ -886,122 +1041,77 @@ if paths is not None:
         with tab_swaption:
             st.markdown("### Precificação de swaption via Monte Carlo")
             st.caption("Os resultados utilizam os mesmos parâmetros calibrados a partir da curva real.")
-            schedule = SwapSchedule.from_tenor(
-                exercise=swaption_settings["exercise"],
-                tenor=swaption_settings["tenor"],
-                freq=swaption_settings["freq"],
-            )
-            rows = []
-            for idx, name in enumerate(compare_models_ordered):
-                cfg = MODEL_REGISTRY[name]
+            run_swap = st.button("Calcular swaption (MC)", key="btn_swaption")
+            if run_swap:
                 try:
-                    params_cmp = params_by_model.get(name)
-                    if params_cmp is None:
-                        continue
-                    price_mc, stderr_mc = price_swaption_for_model(
-                        model_name=name,
-                        model_cfg=cfg,
-                        params=params_cmp,
-                        schedule=schedule,
-                        strike=swaption_settings["strike"],
-                        kind=swaption_settings["kind"],
-                        n_paths=swaption_settings["paths"],
-                        steps_per_year=swaption_settings["steps_per_year"],
-                        exercise=swaption_settings["exercise"],
-                        seed=int(seed) + idx * 17,
-                        preferred_scheme=scheme,
+                    df_swap = _swaption_cached(
+                        compare_models_ordered=compare_models_ordered,
+                        params_by_model=params_by_model,
+                        swaption_settings=swaption_settings,
+                        seed=seed,
+                        scheme=scheme,
                     )
-                    rows.append(
-                        {
-                            "Modelo": name,
-                            "Preco": price_mc,
-                            "Erro padrão": stderr_mc,
-                        }
-                    )
+                    if not df_swap.empty:
+                        st.dataframe(df_swap.style.format({"Preco": "{:.4f}", "Erro padrao": "{:.4f}"}))
+                        st.caption("Visualização do preço estimado por modelo.")
+                        st.bar_chart(df_swap["Preco"])
+                        st.write(
+                            f"Swaption {swaption_settings['kind']} | Exercício {swaption_settings['exercise']} | "
+                            f"Tenor {swaption_settings['tenor']} | Strike {swaption_settings['strike']:.3%}"
+                        )
+                    else:
+                        st.info("Ative ao menos um modelo válido para visualizar o preço da swaption.")
                 except Exception as exc:
-                    st.error(f"Falha ao precificar {name}: {exc}")
-            if rows:
-                df_swap = pd.DataFrame(rows).set_index("Modelo")
-                st.dataframe(df_swap.style.format({"Preco": "{:.4f}", "Erro padrão": "{:.4f}"}))
-                st.caption("Visualização do preço estimado por modelo.")
-                st.bar_chart(df_swap["Preco"])
-                st.write(
-                    f"Swaption {swaption_settings['kind']} | Exercício {swaption_settings['exercise']} | "
-                    f"Tenor {swaption_settings['tenor']} | Strike {swaption_settings['strike']:.3%}"
-                )
+                    st.error(f"Falha ao precificar swaption: {exc}")
             else:
-                st.info("Ative ao menos um modelo válido para visualizar o preço da swaption.")
+                st.info("Clique em 'Calcular swaption (MC)' quando quiser rodar o preço.")
     if alm_settings and tab_alm is not None:
         with tab_alm:
             st.markdown("### Cenários ALM")
             st.write("Aplica choques determinísticos (parallel, steepener, flattener, ramp) sobre uma curva média simulada.")
-            try:
-                data_json = json.loads(alm_settings["json"])
-                assets_df = _build_cashflow_df(data_json.get("assets", []), "assets")
-                passives_df = _build_cashflow_df(data_json.get("passives", []), "passives")
-                max_time = float(max(assets_df["time"].max(), passives_df["time"].max()))
-                horizon = max(1.0, max_time + 0.5)
-                alm_steps = alm_settings["steps_per_year"]
-                n_steps = int(horizon * alm_steps)
-                cfg = MODEL_REGISTRY[model_name]
-                params_alm = params_by_model.get(model_name)
-                if params_alm is None:
-                    raise ValueError("Parâmetros indisponíveis para o modelo selecionado.")
-                scheme_alm = scheme if scheme in cfg["schemes"] else cfg["schemes"][cfg["default_scheme_index"]]
-                t_curve, paths_curve = cfg["simulate"](
-                    scheme=scheme_alm,
-                    params=params_alm,
-                    T=horizon,
-                    n_steps=n_steps,
-                    n_paths=alm_settings["paths"],
-                    seed=alm_settings["seed"],
-                )
-                mean_curve = paths_curve.mean(axis=0)
-                scenario_curves = {name: fn(mean_curve) for name, fn in DEFAULT_SCENARIOS.items()}
-                records = []
-                for sc_name, curve in scenario_curves.items():
-                    pv_assets = _pv_cashflows(assets_df, t_curve, curve)
-                    pv_passives = _pv_cashflows(passives_df, t_curve, curve)
-                    records.append(
-                        {
-                            "Cenario": sc_name,
-                            "PV ativos": pv_assets,
-                            "PV passivos": pv_passives,
-                            "PV líquido": pv_assets - pv_passives,
-                            "Duration ativos": _duration(assets_df, t_curve, curve),
-                            "Duration passivos": _duration(passives_df, t_curve, curve),
-                        }
+            run_alm = st.button("Calcular cenários ALM", key="btn_alm")
+            if run_alm:
+                try:
+                    data_json = json.loads(alm_settings["json"])
+                    assets_df = _build_cashflow_df(data_json.get("assets", []), "assets")
+                    passives_df = _build_cashflow_df(data_json.get("passives", []), "passives")
+                    params_alm = params_by_model.get(model_name)
+                    if params_alm is None:
+                        raise ValueError("Parâmetros indisponíveis para o modelo selecionado.")
+                    t_curve, scenario_curves, df_alm, net_base = _alm_cached(
+                        model_name=model_name,
+                        params=params_alm,
+                        alm_settings=alm_settings,
+                        scheme=scheme,
+                        assets_df=assets_df,
+                        passives_df=passives_df,
                     )
-                df_alm = pd.DataFrame(records).set_index("Cenario")
-                st.dataframe(
-                    df_alm.style.format(
-                        {
-                            "PV ativos": "{:,.0f}",
-                            "PV passivos": "{:,.0f}",
-                            "PV líquido": "{:,.0f}",
-                            "Duration ativos": "{:.2f}",
-                            "Duration passivos": "{:.2f}",
-                        }
+                    st.dataframe(
+                        df_alm.style.format(
+                            {
+                                "PV ativos": "{:,.0f}",
+                                "PV passivos": "{:,.0f}",
+                                "PV liquido": "{:,.0f}",
+                                "Duration ativos": "{:.2f}",
+                                "Duration passivos": "{:.2f}",
+                            }
+                        )
                     )
-                )
-                st.caption("PV líquido por cenário (positivo = superávit dos ativos).")
-                st.bar_chart(df_alm["PV líquido"])
-                fig_curve, ax_curve = plt.subplots(figsize=(7, 4))
-                for sc_name, curve in scenario_curves.items():
-                    ax_curve.plot(t_curve, curve, label=sc_name)
-                ax_curve.set(xlabel="Tempo", ylabel="Taxa média", title="Curvas simuladas + choques")
-                ax_curve.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
-                ax_curve.legend(loc="upper right", fontsize="small")
-                st.pyplot(fig_curve)
-                net_base = (
-                    assets_df.groupby("time")["amount"].sum()
-                    - passives_df.groupby("time")["amount"].sum()
-                ).reset_index(name="net_amount")
-                net_base = net_base.set_index("time")
-                st.caption("Fluxo líquido (ativos - passivos) por bucket de tempo.")
-                st.bar_chart(net_base)
-            except Exception as exc:
-                st.error(f"Erro ao calcular cenários ALM: {exc}")
+                    st.caption("PV líquido por cenário (positivo = superávit dos ativos).")
+                    st.bar_chart(df_alm["PV liquido"])
+                    fig_curve, ax_curve = plt.subplots(figsize=(7, 4))
+                    for sc_name, curve in scenario_curves.items():
+                        ax_curve.plot(t_curve, curve, label=sc_name)
+                    ax_curve.set(xlabel="Tempo", ylabel="Taxa média", title="Curvas simuladas + choques")
+                    ax_curve.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
+                    ax_curve.legend(loc="upper right", fontsize="small")
+                    st.pyplot(fig_curve)
+                    st.caption("Fluxo líquido (ativos - passivos) por bucket de tempo.")
+                    st.bar_chart(net_base)
+                except Exception as exc:
+                    st.error(f"Erro ao calcular cenários ALM: {exc}")
+            else:
+                st.info("Clique em 'Calcular cenários ALM' para gerar os choques.")
     if show_validation and tab_val is not None and val_maturities:
         with tab_val:
             st.markdown("### Validação analítica")
@@ -1009,49 +1119,38 @@ if paths is not None:
                 "Tabela e gráficos comparando Monte Carlo com fórmulas fechadas do modelo. "
                 "Útil para verificar viés numérico e erro vs. passo."
             )
-            st.subheader("Comparacao zero-coupon (MC vs analitico)")
-            price_df = compare_zero_coupon_prices(
-                params=params,
-                maturities=val_maturities,
-                n_paths=int(val_paths),
-                steps_per_year=int(val_steps),
-                seed=int(seed) * 3,
-            )
-            st.dataframe(price_df, use_container_width=True)
-            fig, ax = plt.subplots(figsize=(6, 4))
-            ax.plot(price_df["T"], price_df["abs_error"], "o-", label="|Erro|")
-            ax.set(xlabel="Maturidade", ylabel="Erro absoluto", title="Erro de preco vs maturidade")
-            ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
-            st.pyplot(fig)
+            run_val = st.button("Rodar validação agora", key="btn_validation")
+            if run_val:
+                price_df, err_df, moment_result = _validation_cached(
+                    params=params,
+                    val_maturities=val_maturities,
+                    val_paths=val_paths,
+                    val_steps=val_steps,
+                    seed=seed,
+                    scheme=scheme,
+                )
+                st.subheader("Comparacao zero-coupon (MC vs analitico)")
+                st.dataframe(price_df, use_container_width=True)
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.plot(price_df["T"], price_df["abs_error"], "o-", label="|Erro|")
+                ax.set(xlabel="Maturidade", ylabel="Erro absoluto", title="Erro de preco vs maturidade")
+                ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
+                st.pyplot(fig)
 
-            st.subheader("Erro vs passos (fixando maturidade)")
-            err_df = zero_coupon_error_by_steps(
-                params=params,
-                maturity=1.0,
-                n_paths=int(val_paths),
-                steps_list=[32, 64, 128, 256],
-                seed=int(seed) * 5,
-                scheme=scheme,
-            )
-            st.dataframe(err_df, use_container_width=True)
-            fig2, ax2 = plt.subplots(figsize=(6, 4))
-            ax2.loglog(err_df["dt"], err_df["abs_error"], "s-", label="|Erro|")
-            ax2.set(xlabel="dt", ylabel="Erro absoluto", title="Erro vs passo (log-log)")
-            ax2.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.3)
-            st.pyplot(fig2)
+                st.subheader("Erro vs passos (fixando maturidade)")
+                st.dataframe(err_df, use_container_width=True)
+                fig2, ax2 = plt.subplots(figsize=(6, 4))
+                ax2.loglog(err_df["dt"], err_df["abs_error"], "s-", label="|Erro|")
+                ax2.set(xlabel="dt", ylabel="Erro absoluto", title="Erro vs passo (log-log)")
+                ax2.grid(True, which="both", linestyle="--", linewidth=0.6, alpha=0.3)
+                st.pyplot(fig2)
 
-            st.subheader("Momentos vs analitico")
-            moment_result = compare_moments(
-                params=params,
-                T=1.0,
-                n_paths=int(val_paths),
-                n_steps=int(val_steps),
-                seed=int(seed) * 7,
-                scheme=scheme,
-            )
-            col_m = st.columns(2)
-            col_m[0].metric("Media (MC vs analitico)", f"{moment_result['mean_mc']:.4f}", f"ref {moment_result['mean_analytic']:.4f}")
-            col_m[1].metric("Var (MC vs analitico)", f"{moment_result['var_mc']:.4f}", f"ref {moment_result['var_analytic']:.4f}")
+                st.subheader("Momentos vs analitico")
+                col_m = st.columns(2)
+                col_m[0].metric("Media (MC vs analitico)", f"{moment_result['mean_mc']:.4f}", f"ref {moment_result['mean_analytic']:.4f}")
+                col_m[1].metric("Var (MC vs analitico)", f"{moment_result['var_mc']:.4f}", f"ref {moment_result['var_analytic']:.4f}")
+            else:
+                st.info("Clique em 'Rodar validação agora' quando quiser calcular os comparativos.")
 
     if show_calibration and tab_calib is not None and data_file:
         with tab_calib:
