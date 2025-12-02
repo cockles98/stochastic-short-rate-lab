@@ -29,13 +29,19 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 ### 1. Dashboard Interativo (Streamlit)
 *Visualização em tempo real das trajetórias, yield curves e calibração.*
 <div align="center">
-  <img src="figures/streamlit_demo.png" alt="Streamlit Dashboard Demo" width="700"/>
+  <img src="figures/cir/trajectories.png" alt="Streamlit Dashboard Demo" width="700"/>
+</div>
+<div align="center">
+  <img src="figures/cir/yeld_curves.png" alt="Streamlit Dashboard Demo" width="700"/>
+</div>
+<div align="center">
+  <img src="figures/cir/calibration.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
 
 ### 2. Análise de Convergência
-*Comparativo de erro forte (RMSE) entre esquemas de discretização (Milstein vs Euler).*
+*Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
 <div align="center">
-  <img src="figures/convergence_milstein.png" alt="Convergence Analysis" width="600"/>
+  <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="600"/>
 </div>
 
 ---
