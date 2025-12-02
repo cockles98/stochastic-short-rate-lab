@@ -19,7 +19,7 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 
 * **Pipeline Completo:** Simulação (Euler-Maruyama e Milstein), Precificação de Zeros e Bonds, e Calibração.
 * **Rigor Matemático:** Validação da **Condição de Feller** ($2\kappa\theta > \sigma^2$) e estimativa de ordem de convergência forte.
-* **Dados Reais:** Utilização de dados reais da curva DI e taxa Selic.
+* **Dados Reais:** Utilização de dados brasileiros reais da curva DI e taxa Selic.
 * **Interatividade:** Dashboard **Streamlit** para análise de sensibilidade e cenários de ALM (Asset Liability Management).
 
 ---
