@@ -29,7 +29,6 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 ## 📊 Galeria Visual
 
 ### 1. Dashboard Interativo (Streamlit)
-*Visualização em tempo real das trajetórias, yield curves e calibração.*
 
 #### 1.1 Trajetórias simuladas da taxa curta: cada linha colorida é uma realização Monte Carlo do processo de taxa curta `r_t` do modelo selecionado (CIR/Vasicek/Hull‑White), já calibrado à curva DI/SELIC carregada.
 
@@ -62,7 +61,9 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 > Linha laranja (“CIR calibrado”) são os preços que o modelo CIR produz depois de ajustar seus parâmetros para imitar a curva real.
 
 ### 2. Análise de Convergência
-*Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
+
+#### 2.1 Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.
+
 <div align="center">
   <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="700"/>
 </div>
