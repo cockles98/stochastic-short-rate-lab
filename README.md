@@ -39,7 +39,7 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 
 > As curvas mostram cenários possíveis para a evolução da taxa: todas partem do `r0` calibrado, sofrem choques aleatórios e tendem a reverter para o nível de longo prazo θ, por isso ficam “embaraçadas” na mesma faixa.
 
-#### 1.2 Curva zero-coupon: mostra a curva zero-coupon gerada pelas simulações Monte Carlo.
+#### 1.2 Curva zero-coupon: mostra a curva zero-coupon gerada pelas simulações Monte Carlo (sintético).
 
 <div align="center">
   <img src="figures/cir/yeld_curves.png" alt="Streamlit Dashboard Demo" width="700"/>
@@ -51,7 +51,7 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 
 > A linha vermelha mostra a taxa de juros implícita desses preços (yield). As ondulações vêm do sorteio aleatório das simulações.
 
-#### 1.3 Curva zero-coupon calibrada.
+#### 1.3 Curva zero-coupon calibrada aos dados reais (curva DI).
 
 <div align="center">
   <img src="figures/cir/calibration.png" alt="Streamlit Dashboard Demo" width="700"/>
