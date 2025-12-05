@@ -67,6 +67,10 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
   <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="700"/>
 </div>
 
+> Pontos azuis: o erro observado para cada tamanho de passo.
+
+> Linha laranja tracejada (slope=0.77): a inclinação ajustada numa escala log-log; mostra como o erro cresce quando você aumenta o passo.
+
 ### 3. Exposição dos Dados Econômicos
 *Demonstração gráfica dos dados da taxa selic e da curva pré-fixada, ao longo do tempo.*
 > Curva da taxa selic ao longo do tempo.
