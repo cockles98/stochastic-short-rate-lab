@@ -31,7 +31,7 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 ### 1. Dashboard Interativo (Streamlit)
 *Visualização em tempo real das trajetórias, yield curves e calibração.*
 
-#### 1.1 Cada linha colorida (path_1, path_2, …) é uma realização Monte Carlo do processo de taxa curta `r_t` do modelo selecionado (CIR/Vasicek/Hull‑White), já calibrado à curva DI/SELIC carregada.
+#### 1.1 Cada linha colorida é uma realização Monte Carlo do processo de taxa curta `r_t` do modelo selecionado (CIR/Vasicek/Hull‑White), já calibrado à curva DI/SELIC carregada.
 
 <div align="center">
   <img src="figures/cir/trajectories.png" alt="Streamlit Dashboard Demo" width="700"/>
@@ -39,13 +39,18 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 
 > As curvas mostram cenários possíveis para a evolução da taxa: todas partem do `r0` calibrado, sofrem choques aleatórios e tendem a reverter para o nível de longo prazo θ, por isso ficam “embaraçadas” na mesma faixa.
 
-#### 1.2 Curva zero-coupon, que mostra o preço 
+#### 1.2 Curva zero-coupon: mostra a curva zero-coupon gerada pelas simulações Monte Carlo.
+
 <div align="center">
   <img src="figures/cir/yeld_curves.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
 <div align="center">
   <img src="figures/cir/calibration.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
+
+> Zero-coupon = título de investimento que não paga juros periódicos (cupons), mas é vendido com um desconto em relação ao seu valor de face (valor que o investidor recebe no vencimento).
+
+> Linha azul (Preço): preço teórico do título zero-cupom com vencimento em cada maturidade. Ele cai com o prazo porque são fatores de desconto simulados $$B(0,T)=E[e^{-∫ r_s ds}]$$.
 
 ### 2. Análise de Convergência
 *Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
