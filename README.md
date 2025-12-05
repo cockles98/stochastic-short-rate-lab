@@ -44,13 +44,18 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 <div align="center">
   <img src="figures/cir/yeld_curves.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
+
+> Zero-coupon = título de investimento que não paga juros periódicos (cupons), mas é vendido com um desconto em relação ao seu valor de face (valor que o investidor recebe no vencimento). Exemplo: "compro" um cupom de R$1000,00 hoje pagando apenas R$800,00 (desconto de 20%), e no futuro (final do prazo), resgato os R$1000,00 cheio.
+
+> A linha azul mostra o preço do título hoje: quanto maior o prazo, menor o preço (maior o desconto).
+
+> A linha vermelha mostra a taxa de juros implícita desses preços (yield). As ondulações vêm do sorteio aleatório das simulações.
+
+#### 1.3 Curva calibrada.
+
 <div align="center">
   <img src="figures/cir/calibration.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
-
-> Zero-coupon = título de investimento que não paga juros periódicos (cupons), mas é vendido com um desconto em relação ao seu valor de face (valor que o investidor recebe no vencimento).
-
-> Linha azul (Preço): preço teórico do título zero-cupom com vencimento em cada maturidade. Ele cai com o prazo porque são fatores de desconto simulados $$B(0,T)=E[e^{-∫ r_s ds}]$$.
 
 ### 2. Análise de Convergência
 *Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
