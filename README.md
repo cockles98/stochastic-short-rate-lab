@@ -51,11 +51,15 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 
 > A linha vermelha mostra a taxa de juros implícita desses preços (yield). As ondulações vêm do sorteio aleatório das simulações.
 
-#### 1.3 Curva calibrada.
+#### 1.3 Curva zero-coupon calibrada.
 
 <div align="center">
   <img src="figures/cir/calibration.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
+
+> Linha azul (“Mercado”) são os preços observados/derivados da curva DI real.
+
+> Linha laranja (“CIR calibrado”) são os preços que o modelo CIR produz depois de ajustar seus parâmetros para imitar a curva real.
 
 ### 2. Análise de Convergência
 *Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.*
