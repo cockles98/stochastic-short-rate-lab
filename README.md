@@ -31,7 +31,7 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 ### 1. Dashboard Interativo (Streamlit)
 *Visualização em tempo real das trajetórias, yield curves e calibração.*
 
-Cada linha colorida (path_1, path_2, …) é uma realização Monte Carlo do processo de taxa curta `r_t` do modelo selecionado (CIR/Vasicek/Hull‑White), já calibrado à curva DI/SELIC carregada.
+#### 1.1 Cada linha colorida (path_1, path_2, …) é uma realização Monte Carlo do processo de taxa curta `r_t` do modelo selecionado (CIR/Vasicek/Hull‑White), já calibrado à curva DI/SELIC carregada.
 
 <div align="center">
   <img src="figures/cir/trajectories.png" alt="Streamlit Dashboard Demo" width="700"/>
@@ -39,7 +39,7 @@ Cada linha colorida (path_1, path_2, …) é uma realização Monte Carlo do pro
 
 > As curvas mostram cenários possíveis para a evolução da taxa: todas partem do `r0` calibrado, sofrem choques aleatórios e tendem a reverter para o nível de longo prazo θ, por isso ficam “embaraçadas” na mesma faixa.
 
-curva zero-coupon, que mostra o preço 
+#### 1.2 Curva zero-coupon, que mostra o preço 
 <div align="center">
   <img src="figures/cir/yeld_curves.png" alt="Streamlit Dashboard Demo" width="700"/>
 </div>
