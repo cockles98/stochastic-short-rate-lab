@@ -9,8 +9,9 @@
 
 </div>
 
-> **Framework completo para simulação, precificação e calibração de modelos de taxa curta, com dashboard interativo e análise de convergência forte.**
-> Taxa curta (short rate) = taxa de juros instantânea aplicável em um intervalo de tempo infinitesimal. É como se fosse a “taxa de juros agora”, no limite 𝑑𝑡→0.
+> **Framework completo para simulação, precificação e calibração de modelos de taxa curta (short rate), com dashboard interativo e análise de convergência forte.**
+
+> Short rate = taxa de juros instantânea aplicável em um intervalo de tempo infinitesimal. É como se fosse a “taxa de juros agora”, no limite 𝑑𝑡→0.
 
 Este repositório contém uma implementação robusta do processo **Cox-Ingersoll-Ross (CIR)** e benchmarks comparativos (Vasicek, Hull-White). O projeto abrange desde a resolução numérica de Equações Diferenciais Estocásticas (SDEs) até a calibração com dados reais da **Curva DI (Depósito Interbancário) brasileira**.
 
