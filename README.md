@@ -72,16 +72,24 @@ Este repositório contém uma implementação robusta do processo **Cox-Ingersol
 > Linha laranja tracejada (slope=0.77): a inclinação ajustada numa escala log-log; mostra como o erro cresce quando você aumenta o passo.
 
 ### 3. Exposição dos Dados Econômicos
-*Demonstração gráfica dos dados da taxa selic e da curva pré-fixada, ao longo do tempo.*
-> Curva da taxa selic ao longo do tempo.
+
+#### 3.1 Curva da taxa selic ao longo do tempo.
+
 <div align="center">
   <img src="figures/cir/selic-values.png" alt="Convergence Analysis" width="800"/>
 </div>
 
-> Curva de pré-fixada.
+> Cada degrau marca a taxa básica definida pelo COPOM; fica constante até a próxima decisão, por isso o formato “escada” (step-function).
+
+#### 3.2 Curva de juros prefixada extraída do arquivo de mercado (CurvaZero/DI).
+
 <div align="center">
   <img src="figures/cir/prefixed-curve.png" alt="Convergence Analysis" width="800"/>
 </div>
+
+> Cada ponto é a taxa de um título zero-cupom prefixado que vence naquele prazo (nada a ver com simulação; é dado de mercado).
+
+> Usamos essa curva como insumo “real” para calibrar os modelos (CIR/Vasicek/Hull-White).
 
 ---
 
