@@ -11,7 +11,7 @@
 
 > **Framework completo para simulação, precificação e calibração de modelos de taxa curta, com dashboard interativo e análise de convergência forte.**
 
-Este repositório contém uma implementação robusta do processo **Cox-Ingersoll-Ross (CIR)** e benchmarks comparativos (Vasicek, Hull-White). O projeto abrange desde a resolução numérica de Equações Diferenciais Estocásticas (SDEs) até a calibração com dados reais da **Curva DI brasileira**.
+Este repositório contém uma implementação robusta do processo **Cox-Ingersoll-Ross (CIR)** e benchmarks comparativos (Vasicek, Hull-White). O projeto abrange desde a resolução numérica de Equações Diferenciais Estocásticas (SDEs) até a calibração com dados reais da **Curva DI (Depósito Interbancário) brasileira**.
 
 ---
 
