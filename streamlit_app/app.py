@@ -87,50 +87,75 @@ def price_swaption_for_model(
     seed: int,
     preferred_scheme: str,
 ) -> tuple[float, float]:
+    # Simula apenas até o exercício para evitar viés de predição perfeita.
     total_T = float(schedule.payment_times[-1])
-    n_steps = max(1, int(total_T * steps_per_year))
+    n_steps = max(1, int(exercise * steps_per_year))
     scheme = preferred_scheme if preferred_scheme in model_cfg["schemes"] else model_cfg["schemes"][model_cfg["default_scheme_index"]]
     t, paths = model_cfg["simulate"](
         scheme=scheme,
         params=params,
-        T=total_T,
+        T=exercise,
         n_steps=n_steps,
         n_paths=n_paths,
         seed=seed,
     )
+    zero_coupon_fn = model_cfg["zero_coupon"]
     payoffs = []
     for path in paths:
-        discounts = np.array([_integrated_discount(path, t, float(Ti)) for Ti in schedule.payment_times])
-        payoff = swaption_payoff(discounts, schedule, strike, kind)
+        # desconto 0->T_ex a partir da simulação
         disc_ex = _integrated_discount(path, t, exercise)
-        payoffs.append(payoff * disc_ex)
+        # valor do swap no exercício usando preço analítico com r(T_ex) como novo r0
+        r_tex = float(path[-1])
+        params_tex = _replace_r0(params, r_tex)
+        discounts_fwd = np.array(
+            [zero_coupon_fn(params_tex, float(Ti - exercise)) for Ti in schedule.payment_times]
+        )
+        payoff_ex = swaption_payoff(discounts_fwd, schedule, strike, kind)
+        payoffs.append(payoff_ex * disc_ex)
     payoffs = np.asarray(payoffs)
     price = float(payoffs.mean())
     stderr = float(payoffs.std(ddof=1) / math.sqrt(len(payoffs))) if len(payoffs) > 1 else 0.0
     return price, stderr
 
 
-def calibrate_models_from_curve(curve_file: str | Path, curve_kind: str) -> tuple[dict[str, object], str]:
+def calibrate_models_from_curve(
+    curve_file: str | Path, curve_kind: str, sync_volatility: bool = False
+) -> tuple[dict[str, object], str]:
     mats, prices, market_rates, ref_date = market_curve_from_file(curve_file, curve_kind=curve_kind)
     cir_initial = CIRParams(kappa=1.0, theta=0.05, sigma=0.2, r0=0.05)
     cir_result = calibrate_zero_coupon_curve(mats, prices, cir_initial)
     vas_initial = VasicekParams(kappa=1.0, theta=0.05, sigma=0.15, r0=cir_initial.r0)
     vas_result = calibrate_vasicek_curve(mats, prices, vas_initial)
-    vas_prices = vasicek_price_curve(vas_result.params, mats)
+    cir_sigma = cir_result.params.sigma
+    vas_sigma_raw = vas_result.params.sigma
+    if vas_sigma_raw < 0.1 * cir_sigma:
+        st.warning(
+            f"Volatilidade Vasicek ({vas_sigma_raw:.4f}) ficou abaixo de 10% da vol CIR ({cir_sigma:.4f}). "
+            "Isso pode subestimar o risco; considere ativar 'Sincronizar Volatilidade'."
+        )
+    vas_params = vas_result.params
+    if sync_volatility:
+        vas_params = VasicekParams(
+            kappa=vas_params.kappa,
+            theta=vas_params.theta,
+            sigma=cir_sigma,
+            r0=vas_params.r0,
+        )
+    vas_prices = vasicek_price_curve(vas_params, mats)
     vas_yields = -np.log(np.maximum(vas_prices, 1e-12)) / np.maximum(mats, 1e-6)
     shift_times = np.insert(mats, 0, 0.0)
     shift_values = np.insert(market_rates - vas_yields, 0, 0.0)
     hull_params = HullWhiteParams(
-        kappa=vas_result.params.kappa,
-        theta=vas_result.params.theta,
-        sigma=vas_result.params.sigma,
-        r0=vas_result.params.r0,
+        kappa=vas_params.kappa,
+        theta=vas_params.theta,
+        sigma=vas_params.sigma,
+        r0=vas_params.r0,
         shift_times=shift_times,
         shift_values=shift_values,
     )
     params = {
         "CIR": cir_result.params,
-        "Vasicek": vas_result.params,
+        "Vasicek": vas_params,
         "Hull-White": hull_params,
     }
     return params, ref_date
@@ -142,8 +167,8 @@ def load_curve_components_cached(curve_file: str | Path):
 
 
 @st.cache_data(show_spinner=False)
-def calibrate_models_cached(curve_file: str | Path, curve_kind: str):
-    return calibrate_models_from_curve(curve_file, curve_kind)
+def calibrate_models_cached(curve_file: str | Path, curve_kind: str, sync_volatility: bool = False):
+    return calibrate_models_from_curve(curve_file, curve_kind, sync_volatility=sync_volatility)
 
 
 @st.cache_data(show_spinner=False)
@@ -539,7 +564,7 @@ with sidebar:
     compare_selection = st.multiselect(
         "Modelos no comparativo",
         list(MODEL_REGISTRY),
-        default=[model_name],
+        default=list(MODEL_REGISTRY),
         help="Selecione dois ou mais modelos para sobrepor médias, métricas e curvas.",
     )
     if not compare_selection:
@@ -557,7 +582,7 @@ with sidebar:
         "Horizonte T",
         min_value=0.5,
         max_value=5.0,
-        value=5.0,
+        value=2.5,
         step=0.5,
         help="Tempo final das simulações em anos.",
     )
@@ -573,7 +598,7 @@ with sidebar:
         "Numero de caminhos",
         min_value=5,
         max_value=50,
-        value=10,
+        value=5,
         step=5,
         help="Quantidade de trajetórias exibidas/geradas. Valores maiores usam mais CPU.",
     )
@@ -583,14 +608,20 @@ with sidebar:
         step=1,
         help="Usado para reter reprodutibilidade. Mudar o seed muda os sorteios.",
     )
-    use_real_data = st.checkbox("Usar dados reais (curva + SELIC)", value=False)
+    use_real_data = st.checkbox("Usar dados reais (curva + SELIC)", value=True)
     real_curve_kind = "prefixados"
     real_curve_file = None
     real_selic_file = None
+    sync_volatility = False
     if use_real_data:
         real_curve_file = st.text_input("Arquivo Curva Zero", value="data/real_data/CurvaZero_17112025.csv")
         real_curve_kind = st.selectbox("Tipo de curva", ["prefixados", "ipca"])
         real_selic_file = st.text_input("Arquivo SELIC diária", value="data/real_data/taxa_selic_apurada.csv")
+        sync_volatility = st.checkbox(
+            "Sincronizar volatilidade (Vasicek/Hull-White = CIR)",
+            value=False,
+            help="Forca sigma dos modelos Vasicek/Hull-White a seguir o sigma calibrado do CIR.",
+        )
     else:
         st.error("Ative 'Usar dados reais' e informe os CSVs para continuar.")
         st.stop()
@@ -729,7 +760,9 @@ curve_components = None
 real_curve_date = None
 try:
     curve_components = load_curve_components_cached(real_curve_file)
-    params_by_model, real_curve_date = calibrate_models_cached(real_curve_file, real_curve_kind)
+    params_by_model, real_curve_date = calibrate_models_cached(
+        real_curve_file, real_curve_kind, sync_volatility=sync_volatility
+    )
 except Exception as exc:
     st.error(f"Falha ao calibrar a partir da curva real: {exc}")
     st.stop()

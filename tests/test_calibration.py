@@ -25,3 +25,20 @@ def test_calibrate_zero_coupon_recovers_curve_shape():
     fitted = price_curve(result.params, maturities)
     mae = float(np.mean(np.abs(fitted - market)))
     assert mae < 2e-4
+
+
+def test_calibration_enforces_sigma_floor():
+    sigma_floor = 0.01
+    true_params = CIRParams(kappa=1.0, theta=0.05, sigma=0.02, r0=0.03)
+    maturities = np.array([0.25, 0.5, 1.0])
+    market = price_curve(true_params, maturities)
+    initial = CIRParams(kappa=0.8, theta=0.04, sigma=sigma_floor / 2, r0=0.02)
+
+    result = calibrate_zero_coupon_curve(
+        maturities,
+        market,
+        initial,
+        sigma_floor=sigma_floor,
+    )
+
+    assert result.params.sigma >= sigma_floor

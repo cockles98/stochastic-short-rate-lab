@@ -264,6 +264,7 @@ def calibrate_vasicek_curve(
     initial: VasicekParams,
     weights: Iterable[float] | None = None,
     method: str = "L-BFGS-B",
+    sigma_floor: float = 0.01,
 ) -> CalibrationResult[VasicekParams]:
     """Least-squares calibration of Vasicek parameters to a zero-coupon curve."""
 
@@ -281,11 +282,14 @@ def calibrate_vasicek_curve(
         if weights_arr.size != mats.size:
             raise ValueError("weights must match maturities length.")
 
-    x0 = np.array([initial.kappa, initial.theta, initial.sigma, initial.r0], dtype=float)
+    x0 = np.array(
+        [initial.kappa, initial.theta, max(initial.sigma, sigma_floor), initial.r0],
+        dtype=float,
+    )
     bounds = (
         (1e-6, None),
         (None, None),
-        (1e-6, None),
+        (sigma_floor, None),
         (None, None),
     )
 

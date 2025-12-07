@@ -64,16 +64,29 @@ def compute_discount_curve(model: str, preset: str, horizon: float, n_paths: int
 
 
 def pv_cashflows(df: pd.DataFrame, curve_times: np.ndarray, curve_values: np.ndarray) -> float:
-    volt = np.interp(df["time"].to_numpy(), curve_times, curve_values)
-    discounts = np.exp(-volt * df["time"].to_numpy())
-    return float(np.sum(df["amount"].to_numpy() * discounts))
+    times = df["time"].to_numpy(dtype=float)
+    amounts = df["amount"].to_numpy(dtype=float)
+    # Integral acumulada da curva via regra do trapézio para obter D(T) = exp(-∫ r(u) du).
+    dt = np.diff(curve_times)
+    trap = 0.5 * dt * (curve_values[1:] + curve_values[:-1])
+    integral_curve = np.concatenate([[0.0], np.cumsum(trap)])
+    integral_at_T = np.interp(times, curve_times, integral_curve)
+    discounts = np.exp(-integral_at_T)
+    return float(np.sum(amounts * discounts))
 
 
 def duration(df: pd.DataFrame, curve_times: np.ndarray, curve_values: np.ndarray) -> float:
-    volt = np.interp(df["time"].to_numpy(), curve_times, curve_values)
-    discounts = np.exp(-volt * df["time"].to_numpy())
-    pv = np.sum(df["amount"].to_numpy() * discounts)
-    weighted = np.sum(df["time"].to_numpy() * df["amount"].to_numpy() * discounts)
+    times = df["time"].to_numpy(dtype=float)
+    amounts = df["amount"].to_numpy(dtype=float)
+    dt = np.diff(curve_times)
+    trap = 0.5 * dt * (curve_values[1:] + curve_values[:-1])
+    integral_curve = np.concatenate([[0.0], np.cumsum(trap)])
+    integral_at_T = np.interp(times, curve_times, integral_curve)
+    discounts = np.exp(-integral_at_T)
+    pv = np.sum(amounts * discounts)
+    if pv == 0:
+        return 0.0
+    weighted = np.sum(times * amounts * discounts)
     return float(weighted / pv)
 
 

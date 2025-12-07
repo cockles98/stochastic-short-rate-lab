@@ -49,16 +49,18 @@ def _objective_function(
     market: np.ndarray,
     weights: np.ndarray,
     penalty: float,
+    sigma_floor: float,
 ) -> float:
     kappa, theta, sigma, r0 = x
-    if np.any(x <= 0):
-        return 1e9 + float(np.sum(np.clip(-x, 0, None) ** 2))
+    if kappa <= 0 or theta <= 0 or r0 <= 0 or sigma < sigma_floor:
+        sigma_gap = max(0.0, sigma_floor - sigma)
+        return 1e9 + float(np.sum(np.clip(-x, 0, None) ** 2) + sigma_gap**2)
 
     penalty_loss = 0.0
     try:
         params = CIRParams(kappa=kappa, theta=theta, sigma=sigma, r0=r0)
     except ValueError:
-        params = _sanitize_parameters(x)
+        params = _sanitize_parameters(x, sigma_floor)
         penalty_loss = penalty * 10.0
 
     try:
@@ -75,10 +77,13 @@ def _objective_function(
     return loss
 
 
-def _sanitize_parameters(x: np.ndarray) -> CIRParams:
-    """Coerce optimizer output into a valid CIRParams, enforcing the Feller condition."""
+def _sanitize_parameters(x: np.ndarray, sigma_floor: float) -> CIRParams:
+    """Coerce optimizer output into a valid CIRParams, enforcing Feller and sigma floor."""
 
-    kappa, theta, sigma, r0 = [max(float(val), 1e-6) for val in x]
+    kappa = max(float(x[0]), 1e-6)
+    theta = max(float(x[1]), 1e-6)
+    sigma = max(float(x[2]), sigma_floor)
+    r0 = max(float(x[3]), 1e-6)
     if 2 * kappa * theta <= sigma**2:
         theta = sigma**2 / (2 * kappa) + 1e-6
     return CIRParams(kappa=kappa, theta=theta, sigma=sigma, r0=r0)
@@ -91,8 +96,16 @@ def calibrate_zero_coupon_curve(
     weights: Iterable[float] | None = None,
     penalty: float = 1e4,
     method: str = "L-BFGS-B",
+    sigma_floor: float = 0.005,
 ) -> CalibrationResult:
-    """Calibrate CIR parameters to a set of market zero-coupon prices."""
+    """
+    Calibrate CIR parameters to a set of market zero-coupon prices.
+
+    A minimum volatility `sigma_floor` (default 0.5%) is enforced in the optimizer
+    bounds and parameter sanitation to avoid degenerate calibrations (e.g. when
+    reusing this routine for Vasicek/Hull-White fits) that would understate
+    Monte Carlo dispersion.
+    """
 
     mats = np.asarray(list(maturities), dtype=float)
     market = np.asarray(list(market_prices), dtype=float)
@@ -100,6 +113,8 @@ def calibrate_zero_coupon_curve(
         raise ValueError("maturities and market_prices must have the same non-zero length.")
     if np.any(mats < 0) or np.any(market <= 0):
         raise ValueError("maturities must be >=0 and prices >0.")
+    if sigma_floor <= 0:
+        raise ValueError("sigma_floor must be positive.")
 
     if weights is None:
         weights_arr = 1.0 / np.maximum(market, 1e-8)
@@ -108,26 +123,31 @@ def calibrate_zero_coupon_curve(
         if weights_arr.size != mats.size:
             raise ValueError("weights must match maturities length.")
 
-    x0 = np.array([initial.kappa, initial.theta, initial.sigma, initial.r0], dtype=float)
+    x0 = np.array(
+        [initial.kappa, initial.theta, max(initial.sigma, sigma_floor), initial.r0],
+        dtype=float,
+    )
     bounds = (
         (1e-6, None),
         (1e-6, None),
-        (1e-6, None),
+        (sigma_floor, None),
         (1e-6, None),
     )
 
     result = minimize(
         _objective_function,
         x0=x0,
-        args=(mats, market, weights_arr, penalty),
+        args=(mats, market, weights_arr, penalty, sigma_floor),
         method=method,
         bounds=bounds,
     )
 
+    x_opt = np.array(result.x, dtype=float)
+    x_opt[2] = max(x_opt[2], sigma_floor)
     try:
-        opt_params = CIRParams(*result.x)
+        opt_params = CIRParams(*x_opt)
     except ValueError:
-        opt_params = _sanitize_parameters(result.x)
+        opt_params = _sanitize_parameters(x_opt, sigma_floor)
 
     return CalibrationResult(
         params=opt_params,
