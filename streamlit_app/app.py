@@ -855,9 +855,38 @@ if paths is not None:
 
     with tab_paths:
         st.markdown("### Trajetórias simuladas")
-        st.write(
-            f"Cada linha representa uma realização do processo {model_name} calibrado na curva carregada. "
-            "A tabela abaixo exibe a média, desvio e mínimos/máximos no tempo final."
+        st.markdown(
+            f"""
+            Cada linha é uma realização Monte Carlo do processo **{model_name}** calibrado na curva real informada
+            (DI/SELIC). Você está vendo o short rate $r(t)$ - a taxa de juros instantânea, como se fossem os
+            "juros agora" no limite de $dt \\to 0$. Todas as trajetórias partem de $r_0$ calibrado, sofrem choques
+            aleatórios e tendem a voltar ao nível de longo prazo $\\theta$ (reversão à média).
+            """
+        )
+        st.markdown(
+            """
+            - $\\kappa$: velocidade de retorno ao platô $\\theta$; valores altos fecham o leque mais rápido.
+            - $\\theta$: patamar de equilíbrio; espere as linhas "embolando" em torno dele.
+            - $\\sigma$: volatilidade; controla o quanto os cenários se afastam/abrem.
+            - Cada cor é um cenário possível (Monte Carlo) para a evolução da taxa curta $r(t)$.
+            """
+        )
+        col_params = st.columns(4)
+        col_params[0].metric("r₀ (partida)", f"{params.r0:.4f}")
+        col_params[1].metric("θ (longo prazo)", f"{params.theta:.4f}")
+        col_params[2].metric("κ (mean reversion)", f"{params.kappa:.4f}")
+        col_params[3].metric("σ (vol)", f"{params.sigma:.4f}")
+        if isinstance(params, CIRParams):
+            feller_lhs = 2 * params.kappa * params.theta
+            feller_rhs = params.sigma**2
+            status = "ok (mantém positividade)" if feller_lhs > feller_rhs else "violada (pode tocar zero)"
+            st.caption(
+                f"Condição de Feller $2\\kappa\\theta > \\sigma^2$: $2\\kappa\\theta={feller_lhs:.4f}$ vs "
+                f"$\\sigma^2={feller_rhs:.4f}$ -> {status}."
+            )
+        st.caption(
+            'Leitura rápida: short rate é a "juros agora". O modelo puxa as trajetórias de volta para $\\theta$; '
+            "$\\sigma$ abre o leque de cenários. Use o seed para reproduzir ou alterar os sorteios."
         )
         df_paths = pd.DataFrame(
             paths.T,
@@ -873,24 +902,45 @@ if paths is not None:
 
     with tab_hist:
         st.markdown("### Distribuição terminal")
-        st.write(
-            "Histograma dos valores de $r_T$ nas simulações. Observe como a massa se concentra "
-            "ao redor de $\\theta$ (nível de longo prazo). Para exportar os dados use a CLI."
+        st.markdown(
+            """
+            Distribuição de $r_T$ ao final de $T$ anos. Cada barra conta quantas simulações terminaram naquele
+            intervalo de taxa.
+            - Pico perto de $\\theta$: efeito da reversão à média ($\\kappa$).
+            - Largura reflete risco: mais $\\sigma$ ou $T$ -> histograma mais espalhado.
+            - Massa perto de zero só aparece se $2\\kappa\\theta \\leq \\sigma^2$ (violação da Condição de Feller).
+            - Esperança analítica: $\\mathbb{E}[r_T] = \\theta + (r_0-\\theta) e^{-\\kappa T}$.
+            """
         )
         terminals = paths[:, -1]
+        mean_term = terminals.mean()
+        median_term = float(np.median(terminals))
+        p10, p90 = np.percentile(terminals, [10, 90])
+        col_hist = st.columns(4)
+        col_hist[0].metric("Média (MC)", f"{mean_term:.4f}")
+        col_hist[1].metric("Mediana", f"{median_term:.4f}")
+        col_hist[2].metric("Desvio padrão", f"{terminals.std(ddof=1):.4f}")
+        col_hist[3].metric("P10 / P90", f"{p10:.4f} / {p90:.4f}")
         bins = min(40, max(5, paths.shape[1] // 4))
         fig_hist, ax_hist = plt.subplots(figsize=(7, 3))
         ax_hist.hist(terminals, bins=bins, alpha=0.8, color="#76b7fb", edgecolor="black")
-        ax_hist.set(xlabel="Taxa final r_T", ylabel="Contagem", title="Histograma dos terminais")
+        ax_hist.set(xlabel="Taxa final $r_T$", ylabel="Contagem", title="Histograma dos terminais")
         ax_hist.grid(True, axis="y", linestyle="--", linewidth=0.6, alpha=0.3)
         st.pyplot(fig_hist)
-        st.caption("Contagem simples é mais intuitiva para ver a concentração das trajetórias.")
+        st.caption(
+            "Como ler: barra alta = maior probabilidade de terminar naquele nível. Se o leque estiver muito aberto, "
+            "ajuste $\\sigma$ ou reduza $T$; se o pico não fica perto de $\\theta$, veja os parâmetros calibrados."
+        )
 
     with tab_term:
         st.markdown("### Estrutura a termo simulada")
-        st.write(
-            f"Monte Carlo da estrutura a termo sob {model_name}. A tabela mostra maturidades, preços e yields; "
-            "os dados também podem ser gerados pela CLI (`term-structure`)."
+        st.markdown(
+            f"""
+            Preços zero-coupon $B(0,T)$ e yields $y_T = -\\ln B(0,T)/T$ simulados para o modelo **{model_name}**.
+            - $B(0,T)$: quanto vale hoje R\\$1 a ser recebido em $T$ anos (desconto estocástico).
+            - $y_T$: taxa implícita do preço. Linha azul (preço) normalmente cai com $T$; linha vermelha (yield) mostra a curva de juros.
+            - Ajuste Monte Carlo: mais caminhos e passos/ano reduzem ruído; recalcule sempre que mudar parâmetros.
+            """
         )
         if show_term_structure and term_paths is not None:
             maturities = np.linspace(0.25, 10.0, 40)
@@ -909,15 +959,20 @@ if paths is not None:
 
                 fig, ax_price = plt.subplots(figsize=(7, 4))
                 ax_yield = ax_price.twinx()
-                ax_price.plot(ts_df["T"], ts_df["price"], "o-", color="#1f77b4", label="Preco")
-                ax_yield.plot(ts_df["T"], ts_df["zero_rate"], "s--", color="#d62728", label="Yield")
-                ax_price.set(xlabel="Maturidade", ylabel="Preco", title="Curva zero-coupon")
-                ax_yield.set(ylabel="Yield")
+                ax_price.plot(ts_df["T"], ts_df["price"], "o-", color="#1f77b4", label=r"$B(0,T)$")
+                ax_yield.plot(ts_df["T"], ts_df["zero_rate"], "s--", color="#d62728", label="Yield $y_T$")
+                ax_price.set(xlabel="Maturidade T (anos)", ylabel=r"Preço $B(0,T)$", title="Curva zero-coupon")
+                ax_yield.set(ylabel=r"Yield $y_T$")
                 ax_price.grid(True, linestyle="--", linewidth=0.6, alpha=0.3)
                 lines = ax_price.get_lines() + ax_yield.get_lines()
                 labels = [line.get_label() for line in lines]
                 ax_price.legend(lines, labels, loc="best")
                 st.pyplot(fig)
+                st.caption(
+                    "Leitura rápida: pontos azuis são preços de face 1 descontados; quanto maior T, menor o preço. "
+                    "Pontos vermelhos são yields extraídos desses preços. Se a curva estiver ruidosa, aumente "
+                    "caminhos ou passos/ano."
+                )
             else:
                 st.info("Clique em 'Calcular term structure' para gerar a curva Monte Carlo.")
         else:
