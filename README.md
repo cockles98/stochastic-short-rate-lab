@@ -5,163 +5,139 @@
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red?style=for-the-badge&logo=streamlit&logoColor=white)
 ![Math](https://img.shields.io/badge/Method-Euler--Maruyama%20%2F%20Milstein-purple?style=for-the-badge)
-![Academic](https://img.shields.io/badge/Academic-UFRJ-green?style=for-the-badge)
+![Models](https://img.shields.io/badge/Models-CIR%20%7C%20Vasicek%20%7C%20Hull--White-orange?style=for-the-badge)
 
 </div>
 
-> **Framework completo para simulação, precificação e calibração de modelos de taxa curta (short rate), com dashboard interativo e análise de convergência forte.**
+> **A complete framework for simulation, pricing, and calibration of short-rate models — with an interactive dashboard and strong convergence analysis.**
 
-> Short rate = taxa de juros instantânea aplicável em um intervalo de tempo infinitesimal. É como se fosse a “taxa de juros agora”, no limite 𝑑𝑡→0.
+This repository implements the **Cox-Ingersoll-Ross (CIR)** model with comparative benchmarks (Vasicek, Hull-White), covering everything from numerical SDE solving to real-world calibration against **Brazilian DI curve** data. Built with both rigor and usability in mind: the full pipeline is accessible via CLI, Python API, or an interactive Streamlit dashboard.
 
-Este repositório contém uma implementação robusta do processo **Cox-Ingersoll-Ross (CIR)** e benchmarks comparativos (Vasicek, Hull-White). O projeto abrange desde a resolução numérica de Equações Diferenciais Estocásticas (SDEs) até a calibração com dados reais da **Curva DI (Depósito Interbancário) brasileira**.
+**[🚀 Try the live dashboard here](https://cockles98-stochastic-short-rate-lab-streamlit-appapp-slmkui.streamlit.app)**
 
 ---
 
-## 🎯 Destaques do Projeto
+## 🎯 Project Highlights
 
-* **Pipeline Completo:** Simulação (Euler-Maruyama e Milstein), Precificação de Zeros e Bonds, e Calibração.
-* **Rigor Matemático:** Validação da **Condição de Feller** ($2\kappa\theta > \sigma^2$) e estimativa de ordem de convergência forte.
-* **Dados Reais:** Utilização de dados brasileiros reais da curva DI e taxa Selic.
-* **Interatividade:** Dashboard **Streamlit** para análise de sensibilidade e cenários de ALM (Asset Liability Management).
+- **Full Pipeline:** Simulation (Euler-Maruyama and Milstein), zero-coupon bond pricing, term structure generation, and model calibration
+- **Mathematical Rigor:** Feller condition validation ($2\kappa\theta > \sigma^2$), strong convergence order estimation, and mass conservation tests
+- **Real Market Data:** Calibration against real Brazilian DI curve and Selic rate data
+- **Interactive Dashboard:** Streamlit app for sensitivity analysis, model comparison, and ALM stress scenarios
 
 ---
 
-## 📊 Galeria Visual
+## 📊 Visual Gallery
 
-### 1. Dashboard Interativo (Streamlit)
+### 1. Interactive Dashboard (Streamlit)
 
-#### 1.1 Trajetórias simuladas da taxa curta: cada linha colorida é uma realização Monte Carlo do processo de taxa curta `r_t` do modelo selecionado (CIR/Vasicek/Hull‑White), já calibrado à curva DI/SELIC carregada.
-
-<div align="center">
-  <img src="figures/cir/trajectories.png" alt="Streamlit Dashboard Demo" width="700"/>
-</div>
-
-> As curvas mostram cenários possíveis para a evolução da taxa: todas partem do `r0` calibrado, sofrem choques aleatórios e tendem a reverter para o nível de longo prazo θ, por isso ficam “embaraçadas” na mesma faixa.
-
-#### 1.2 Curva zero-coupon: mostra a curva zero-coupon gerada pelas simulações Monte Carlo (sintético).
+#### Simulated Short Rate Trajectories
+Each colored line is a Monte Carlo realization of the short rate process $r_t$ under the selected model (CIR/Vasicek/Hull-White), calibrated to the loaded DI/Selic curve. All paths start from the calibrated $r_0$ and mean-revert toward the long-run level $\theta$.
 
 <div align="center">
-  <img src="figures/cir/yeld_curves.png" alt="Streamlit Dashboard Demo" width="700"/>
+  <img src="figures/cir/trajectories.png" alt="Simulated Trajectories" width="700"/>
 </div>
 
-> Zero-coupon = título de investimento que não paga juros periódicos (cupons), mas é vendido com um desconto em relação ao seu valor de face (valor que o investidor recebe no vencimento). Exemplo: "compro" um cupom de R$1000,00 hoje pagando apenas R$800,00 (desconto de 20%), e no futuro (final do prazo), resgato os R$1000,00 cheio.
-
-> A linha azul mostra o preço do título hoje: quanto maior o prazo, menor o preço (maior o desconto).
-
-> A linha vermelha mostra a taxa de juros implícita desses preços (yield). As ondulações vêm do sorteio aleatório das simulações.
-
-#### 1.3 Curva zero-coupon calibrada aos dados reais (curva DI).
+#### Synthetic Zero-Coupon Curve
+Zero-coupon curve generated from the Monte Carlo simulations. The blue line shows today's bond prices across maturities; the red line shows the implied yield curve. Oscillations reflect sampling noise from the stochastic simulations.
 
 <div align="center">
-  <img src="figures/cir/calibration.png" alt="Streamlit Dashboard Demo" width="700"/>
+  <img src="figures/cir/yeld_curves.png" alt="Zero-Coupon Curve" width="700"/>
 </div>
 
-> Linha azul (“Mercado”) são os preços observados/derivados da curva DI real.
+#### Calibrated Zero-Coupon Curve (vs. Real DI Data)
+The blue line ("Market") represents prices derived from the real DI curve. The orange line ("Calibrated CIR") shows prices produced by the CIR model after fitting its parameters to replicate the market curve.
 
-> Linha laranja (“CIR calibrado”) são os preços que o modelo CIR produz depois de ajustar seus parâmetros para imitar a curva real.
+<div align="center">
+  <img src="figures/cir/calibration.png" alt="Calibration" width="700"/>
+</div>
 
-### 2. Análise de Convergência
+### 2. Convergence Analysis
 
-#### 2.1 Comparativo de erro forte (RMSE) da discretização de Euler Maruyama.
+#### Strong Error (RMSE) — Euler-Maruyama Discretization
+Blue dots show observed error per step size. The dashed orange line (slope = 0.77 in log-log scale) shows the fitted convergence rate — consistent with the theoretical strong order of 0.5 for the CIR process under Euler-Maruyama.
 
 <div align="center">
   <img src="figures/cir/convergence_em.png" alt="Convergence Analysis" width="700"/>
 </div>
 
-> Pontos azuis: o erro observado para cada tamanho de passo.
+### 3. Brazilian Market Data
 
-> Linha laranja tracejada (slope=0.77): a inclinação ajustada numa escala log-log; mostra como o erro cresce quando você aumenta o passo.
-
-### 3. Exposição dos Dados Econômicos
-
-#### 3.1 Curva da taxa selic ao longo do tempo.
+#### Selic Rate Over Time
+Each step marks the base rate set by the COPOM committee — constant between decisions, producing the characteristic step-function shape.
 
 <div align="center">
-  <img src="figures/cir/selic-values.png" alt="Convergence Analysis" width="800"/>
+  <img src="figures/cir/selic-values.png" alt="Selic Rate" width="800"/>
 </div>
 
-> Cada degrau marca a taxa básica definida pelo COPOM; fica constante até a próxima decisão, por isso o formato “escada” (step-function).
-
-#### 3.2 Curva de juros prefixada extraída do arquivo de mercado (CurvaZero/DI).
+#### Prefixed DI Zero-Coupon Curve
+Each point is the rate of a prefixed zero-coupon instrument maturing at that tenor — raw market data used as calibration input for CIR/Vasicek/Hull-White.
 
 <div align="center">
-  <img src="figures/cir/prefixed-curve.png" alt="Convergence Analysis" width="800"/>
+  <img src="figures/cir/prefixed-curve.png" alt="DI Curve" width="800"/>
 </div>
-
-> Cada ponto é a taxa de um título zero-cupom prefixado que vence naquele prazo (nada a ver com simulação; é dado de mercado).
-
-> Usamos essa curva como insumo “real” para calibrar os modelos (CIR/Vasicek/Hull-White).
 
 ---
 
-## 📐 Fundamentação Teórica
+## 📐 Mathematical Foundation
 
-O modelo CIR segue a seguinte dinâmica estocástica:
+The CIR model follows the stochastic dynamics:
 
 $$dr_t = \kappa(\theta - r_t)dt + \sigma \sqrt{r_t} dW_t$$
 
-Onde a implementação garante a **positividade** da taxa e estabilidade numérica através do esquema de Milstein modificado para processos de raiz quadrada.
+The implementation enforces **rate positivity** and numerical stability through a modified Milstein scheme for square-root processes, with Feller condition validation at calibration time.
 
 ---
 
-## 🚀 Instalação Rápida
+## 🚀 Getting Started
 
 ```bash
-# 1. Clone o repositório
+# 1. Clone the repository
 git clone https://github.com/cockles98/cir-short-rate-lab.git
 cd cir-short-rate-lab
 
-# 2. Crie o ambiente virtual
+# 2. Create virtual environment
 python -m venv .venv
 source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
 
-# 3. Instale as dependências
+# 3. Install dependencies
 pip install -r requirements.txt
 ```
 
------
+---
 
 ## 🖥️ Dashboard & CLI
 
-### Modo Interativo (Streamlit)
-
-A maneira mais fácil de explorar o modelo.
+### Interactive Mode (Streamlit)
 
 ```bash
 streamlit run streamlit_app/app.py
 ```
 
-> **Ou acessando diretamente o dashboard online através do [link](https://cockles98-stochastic-short-rate-lab-streamlit-appapp-slmkui.streamlit.app).**
+> **Or access the [live dashboard](https://cockles98-stochastic-short-rate-lab-streamlit-appapp-slmkui.streamlit.app) directly — no installation required.**
 
-*Funcionalidades:* Calibração em tempo real, Comparativo Visual (CIR vs Vasicek), Cenários de Stress (ALM).
+Features: real-time calibration, visual model comparison (CIR vs. Vasicek vs. Hull-White), stress scenario analysis for ALM.
 
-### Modo CLI (Linha de Comando)
+### CLI Mode
 
-Para execuções em lote e geração de relatórios, utilize o módulo `cir.cli`.
-
-| Comando | Descrição | Exemplo |
+| Command | Description | Example |
 | :--- | :--- | :--- |
-| `simulate-paths` | Gera trajetórias estocásticas | `python -m cir.cli simulate-paths --preset baseline` |
-| `convergence` | Análise de erro forte (Log-Log) | `python -m cir.cli convergence --scheme milstein` |
-| `term-structure` | Gera curva Zero-Coupon via MC | `python -m cir.cli term-structure --Tmax 10` |
-| `calibrate-market` | Ajusta parâmetros à curva DI | `python -m cir.cli calibrate-market --data data/raw_di_curve.csv` |
+| `simulate-paths` | Generate stochastic trajectories | `python -m cir.cli simulate-paths --preset baseline` |
+| `convergence` | Strong error analysis (log-log) | `python -m cir.cli convergence --scheme milstein` |
+| `term-structure` | Generate zero-coupon curve via MC | `python -m cir.cli term-structure --Tmax 10` |
+| `calibrate-market` | Fit parameters to DI curve | `python -m cir.cli calibrate-market --data data/raw_di_curve.csv` |
 
------
+---
 
-## 📂 Estrutura do Repositório
+## 📂 Repository Structure
 
-  * **`cir/`**: Núcleo da biblioteca (SDEs, Solvers, Calibração).
-  * **`benchmarks/`**: Implementações comparativas (Vasicek, Hull-White).
-  * **`streamlit_app/`**: Código do frontend interativo.
-  * **`scripts/`**: Utilitários para download de dados (Data Fetchers).
-  * **`tests/`**: Suite de testes automatizados (`pytest`) para validação matemática.
-  * **`notebooks/`**: Estudos de caso e validações exploratórias.
+- **`cir/`** — Core library (SDEs, solvers, calibration)
+- **`benchmarks/`** — Comparative implementations (Vasicek, Hull-White)
+- **`streamlit_app/`** — Interactive frontend
+- **`scripts/`** — Data fetching utilities
+- **`tests/`** — Automated test suite (`pytest`) for mathematical validation
+- **`notebooks/`** — Case studies and exploratory validation
 
------
+---
 
-## 📜 Créditos e Contexto
-
-Projeto desenvolvido para a disciplina de **Modelagem Matemática em Finanças II (UFRJ, 2025/2)**.
-
-  * **Objetivo:** Implementação numérica rigorosa de modelos de taxa curta para precificação de derivativos e gestão de portfólio.
+*Interested in similar work — interest rate modeling, derivatives pricing, or stochastic simulation? Feel free to reach out via [LinkedIn](https://www.linkedin.com/in/felipe-cockles) or [email](mailto:felipe.cockles@hotmail.com).*
